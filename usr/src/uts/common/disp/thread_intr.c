@@ -85,6 +85,8 @@ thread_create_intr(cpu_t *cp)
 	 */
 	tp->t_bind_cpu = PBIND_NONE;	/* no USER-requested binding */
 	tp->t_bind_pset = PS_NONE;
+	tp->t_bind_ncpus = 0;
+	tp->t_bind_cpus = NULL;
 
 #if defined(__i386) || defined(__amd64)
 	tp->t_stk -= STACK_ALIGN;

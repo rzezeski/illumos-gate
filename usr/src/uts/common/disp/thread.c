@@ -425,6 +425,12 @@ thread_create(
 	t->t_schedflag = TS_LOAD | TS_DONT_SWAP;
 	t->t_bind_cpu = PBIND_NONE;
 	t->t_bindflag = (uchar_t)default_binding_mode;
+	t->t_bind_ncpus = 0;
+	t->t_bind_cpus = NULL;
+	/*
+	 * TODO: don't use 0, use constant
+	 */
+	t->t_bindflag2 = 0;
 	t->t_bind_pset = PS_NONE;
 	t->t_plockp = &pp->p_lock;
 	t->t_copyops = NULL;
@@ -1400,6 +1406,8 @@ thread_create_intr(struct cpu *cp)
 	 */
 	tp->t_bind_cpu = PBIND_NONE;	/* no USER-requested binding */
 	tp->t_bind_pset = PS_NONE;
+	tp->t_bind_ncpus = 0;
+	tp->t_bind_cpus = NULL;
 
 #if defined(__i386) || defined(__amd64)
 	tp->t_stk -= STACK_ALIGN;

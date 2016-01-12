@@ -527,6 +527,9 @@ grow:
 		t->t_cpupart = oldpart = &cp_default;
 		t->t_bind_pset = PS_NONE;
 		t->t_bindflag = (uchar_t)default_binding_mode;
+		t->t_bind_ncpus = 0;
+		t->t_bind_cpus = NULL;
+		t->t_bindflag2 = 0;
 	} else {
 		binding = curthread->t_bind_cpu;
 		t->t_bind_cpu = binding;
@@ -535,6 +538,14 @@ grow:
 		t->t_bind_pset = curthread->t_bind_pset;
 		t->t_bindflag = curthread->t_bindflag |
 		    (uchar_t)default_binding_mode;
+		t->t_bind_ncpus = curthread->t_bind_ncpus;
+		/*
+		 * TODO: need to create copy so multiple threads don't
+		 * ref same memory, e.g. if one of those lwps is
+		 * unbound and it's t_bind_cpus is freed.
+		 */
+		t->t_bind_cpus = curthread->t_bind_cpus;
+		t->t_bindflag2 = curthread->t_bindflag2;
 	}
 
 	/*
