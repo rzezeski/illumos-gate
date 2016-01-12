@@ -1481,7 +1481,11 @@ setfrontdq(kthread_t *tp)
 		return;
 	}
 
-	if (tp->t_bound_cpu || tp->t_weakbound_cpu)
+	/*
+	 * TODO: either use t_bind_ncpus > 0 or create a field that
+	 * marks if thread is bound or not.
+	 */
+	if (tp->t_bound_cpu || tp->t_bind_cpus || tp->t_weakbound_cpu)
 		bound = 1;
 	else
 		bound = 0;
@@ -1521,6 +1525,45 @@ setfrontdq(kthread_t *tp)
 			 * Migrate to a cpu in the new partition.
 			 */
 			cp = disp_lowpri_cpu(tp->t_cpupart->cp_cpulist,
+			    tp->t_lpl, tp->t_pri, NULL);
+		}
+		ASSERT((cp->cpu_flags & CPU_QUIESCED) == 0);
+	} else if (tp->t_bind_ncpus > 0) {
+		if (tpri >= kpqpri) {
+			setkpdq(tp, SETKP_FRONT);
+			return;
+		}
+		cp = tp->t_cpu;
+		if (tp->t_cpupart == cp->cpu_part) {
+			/*
+			 * We'll generally let this thread continue to run
+			 * where it last ran, but will consider migration if:
+			 * - The thread last ran outside it's home lgroup.
+			 * - The CPU where it last ran is the target of an
+			 *   offline request (a thread_nomigrate() on the in
+			 *   motion CPU relies on this when forcing a preempt).
+			 * - The thread isn't the highest priority thread where
+			 *   it last ran, and it is considered not likely to
+			 *   have significant cache warmth.
+			 */
+			if ((!LGRP_CONTAINS_CPU(tp->t_lpl->lpl_lgrp, cp)) ||
+			    (cp == cpu_inmotion)) {
+				cp = disp_lowpri_cpu2(tp->t_cpu,
+				    tp->t_bind_ncpus, tp->t_bind_cpus,
+				    tp->t_lpl, tpri,
+				    (tp == curthread) ? cp : NULL);
+			} else if ((tpri < cp->cpu_disp->disp_maxrunpri) &&
+			    (!THREAD_HAS_CACHE_WARMTH(tp))) {
+				cp = disp_lowpri_cpu2(tp->t_cpu,
+				    tp->t_bind_ncpus, tp->t_bind_cpus,
+				    tp->t_lpl, tpri, NULL);
+			}
+		} else {
+			/*
+			 * Migrate to a cpu in the new partition.
+			 */
+			cp = disp_lowpri_cpu2(tp->t_cpupart->cp_cpulist,
+			    tp->t_bind_ncpus, tp->t_bind_cpus,
 			    tp->t_lpl, tp->t_pri, NULL);
 		}
 		ASSERT((cp->cpu_flags & CPU_QUIESCED) == 0);
