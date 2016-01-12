@@ -31,6 +31,9 @@ SRCS=	$(OBJS:%.o=../%.c)
 
 include ../../Makefile.cmd
 
+# TODO: is this the right way to enable C99?
+C99MODE = -xc99=%all
+
 LDLIBS += -lproc
 CERRWARN += -_gcc=-Wno-parentheses
 CERRWARN += -_gcc=-Wno-uninitialized

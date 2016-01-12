@@ -411,6 +411,8 @@ extern	int	pr_getsockopt(struct ps_prochandle *,
 			int, int, int, void *, int *);
 extern	int	pr_processor_bind(struct ps_prochandle *,
 			idtype_t, id_t, int, int *);
+extern	int	pr_processor_bind2(struct ps_prochandle *,
+    pbind2_op_t, idtype_t, id_t, size_t *, processorid_t *, uchar_t *);
 
 /*
  * Function prototypes for accessing per-LWP register information.

@@ -552,12 +552,16 @@ processor_bind2(pbind2_op_t op, idtype_t idtype, id_t id, size_t *uncpus,
 	contract_t	*ct;
 
 	if ((op == PBIND2_OP_SET || op == PBIND2_OP_QUERY) &&
-	    (uncpus == NULL || ucpus == NULL || uflags == NULL))
+	    (uncpus == NULL || ucpus == NULL))
 		return (set_errno(EINVAL));
 
 	size_t ncpus = *uncpus;
 	size_t ncpus_orig = ncpus;
-	uchar_t flags = *uflags;
+	uchar_t flags;
+
+	if (uflags != NULL)
+		flags = *uflags;
+
 	/*
 	 * If the binding is being queried (PBIND2_OP_QUERY) then this
 	 * memory is freed at the end of this function. After the data
@@ -775,7 +779,8 @@ processor_bind2(pbind2_op_t op, idtype_t idtype, id_t id, size_t *uncpus,
 		kmem_free(cpus, ncpus_orig * sizeof (short));
 
 		*uncpus = ncpus;
-		*uflags = flags;
+		if (uflags != NULL)
+			*uflags = flags;
 	}
 
 	return (ret ? set_errno(ret) : 0);

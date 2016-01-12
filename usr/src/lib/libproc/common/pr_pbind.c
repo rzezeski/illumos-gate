@@ -87,3 +87,90 @@ pr_processor_bind(struct ps_prochandle *Pr, idtype_t idtype, id_t id,
 	}
 	return (rval.sys_rval1);
 }
+
+int
+pr_processor_bind2(struct ps_prochandle *Pr, pbind2_op_t op, idtype_t idtype,
+    id_t id, size_t *ncpus, processorid_t *cpus, uchar_t *flags)
+{
+	sysret_t rval;			/* return value */
+	argdes_t argd[6];		/* arg descriptors */
+	argdes_t *adp = &argd[0];	/* first argument */
+	int error;
+
+	if (Pr == NULL)		/* no subject process */
+		return (processor_bind2(op, idtype, id, ncpus, cpus, flags));
+
+	adp->arg_value = op;		/* op */
+	adp->arg_object = NULL;
+	adp->arg_type = AT_BYVAL;
+	adp->arg_inout = AI_INPUT;
+	adp->arg_size = 0;
+	adp++;
+
+	adp->arg_value = idtype;	/* idtype */
+	adp->arg_object = NULL;
+	adp->arg_type = AT_BYVAL;
+	adp->arg_inout = AI_INPUT;
+	adp->arg_size = 0;
+	adp++;
+
+	adp->arg_value = id;		/* id */
+	adp->arg_object = NULL;
+	adp->arg_type = AT_BYVAL;
+	adp->arg_inout = AI_INPUT;
+	adp->arg_size = 0;
+	adp++;
+
+	if (cpus == NULL) {
+		adp->arg_value = 0;	/* ncpus */
+		adp->arg_object = NULL;
+		adp->arg_type = AT_BYVAL;
+		adp->arg_inout = AI_INPUT;
+		adp->arg_size = 0;
+	} else {
+		adp->arg_value = 0;
+		adp->arg_object = ncpus;
+		adp->arg_type = AT_BYREF;
+		adp->arg_inout = AI_INOUT;
+		adp->arg_size = sizeof (size_t);
+	}
+	adp++;
+
+	if (cpus == NULL) {
+		adp->arg_value = 0;	/* cpus */
+		adp->arg_object = NULL;
+		adp->arg_type = AT_BYVAL;
+		adp->arg_inout = AI_INPUT;
+		adp->arg_size = 0;
+	} else {
+		adp->arg_value = 0;
+		adp->arg_object = cpus;
+		adp->arg_type = AT_BYREF;
+		adp->arg_inout = AI_INOUT;
+		adp->arg_size = *ncpus * sizeof (processorid_t);
+	}
+	adp++;
+
+	if (cpus == NULL) {
+		adp->arg_value = 0;	/* flags */
+		adp->arg_object = NULL;
+		adp->arg_type = AT_BYVAL;
+		adp->arg_inout = AI_INPUT;
+		adp->arg_size = 0;
+	} else {
+		adp->arg_value = 0;
+		adp->arg_object = flags;
+		adp->arg_type = AT_BYREF;
+		adp->arg_inout = AI_INOUT;
+		adp->arg_size = *ncpus * sizeof (uchar_t);
+	}
+	adp++;
+
+	error = Psyscall(Pr, &rval, SYS_processor_bind2, 6, &argd[0]);
+
+	if (error) {
+		errno = (error < 0)? ENOSYS : error;
+		return (-1);
+	}
+	return (rval.sys_rval1);
+}

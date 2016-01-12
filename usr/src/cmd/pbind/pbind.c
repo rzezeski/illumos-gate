@@ -94,13 +94,48 @@ die(char *format, ...)
 }
 
 /*
+ * Convert an array of CPUs into a string.
+ *
+ * TODO: normalize output to make use of ranges, e.g. turn 1,2,3,4
+ * into 1-4.
+ */
+static char *
+cpu_string(size_t ncpus, processorid_t *cpus)
+{
+	/*
+	 * TODO: assume 1024 is enough for now. Later, grow string as
+	 * needed.
+	 */
+	size_t pos = 0;
+	int n;
+	char *s = malloc(1024);
+	if (s == NULL)
+		die(gettext("failed to malloc\n"));
+
+	for (int i = 0; i < ncpus; i++) {
+		if ((n = snprintf(&s[pos], 1022 - pos, "%u", cpus[i])) < 1)
+			die(gettext("failed to convert cpu to string\n"));
+		/*
+		 * At this point pos will point to the null byte
+		 * because pos is 0-based and snprintf doesn't include
+		 * the null byte in the return count.
+		 */
+		pos += n;
+		s[pos++] = ',';
+	}
+
+	return (s);
+}
+
+/*
  * Output for query.
  */
 static void
-query_out(id_t pid, id_t lwpid, processorid_t cpu)
+query_out(id_t pid, id_t lwpid, size_t ncpus, processorid_t *cpus)
 {
 	char *proclwp;
 	char pidstr[21];
+	char *cpustr;
 
 	if (lwpid == -1) {
 		(void) snprintf(pidstr, 20, "%d", (int)pid);
@@ -110,27 +145,30 @@ query_out(id_t pid, id_t lwpid, processorid_t cpu)
 		proclwp = "lwp";
 	}
 
-	if (cpu == PBIND_NONE)
+	if (ncpus == 0) {
 		(void) printf(gettext("%s id %s: not bound\n"),
 		    proclwp, pidstr);
-	else
-		(void) printf(gettext("%s id %s: %d\n"),
-		    proclwp, pidstr, cpu);
+	} else {
+		cpustr = cpu_string(ncpus, cpus);
+		(void) printf(gettext("%s id %s: %s\n"),
+		    proclwp, pidstr, cpustr);
+		free(cpustr);
+	}
 }
 
 /*
  * Binding error.
  */
 static void
-bind_err(processorid_t cpu, id_t pid, id_t lwpid, int err)
+bind_err(pbind2_op_t op, id_t pid, id_t lwpid, int err)
 {
 	char *msg;
 
-	switch (cpu) {
-	case PBIND_NONE:
+	switch (op) {
+	case PBIND2_OP_CLEAR:
 		msg = gettext("unbind");
 		break;
-	case PBIND_QUERY:
+	case PBIND2_OP_QUERY:
 		msg = gettext("query");
 		break;
 	default:
@@ -149,10 +187,12 @@ bind_err(processorid_t cpu, id_t pid, id_t lwpid, int err)
  * Output for bind.
  */
 static void
-bind_out(id_t pid, id_t lwpid, processorid_t old, processorid_t new)
+bind_out(id_t pid, id_t lwpid, size_t old_ncpus, processorid_t *old_cpus,
+    size_t new_ncpus, processorid_t *new_cpus)
 {
 	char *proclwp;
 	char pidstr[21];
+	char *ncpustr, *ocpustr;
 
 	if (lwpid == -1) {
 		(void) snprintf(pidstr, 20, "%d", (int)pid);
@@ -162,20 +202,30 @@ bind_out(id_t pid, id_t lwpid, processorid_t old, processorid_t new)
 		proclwp = "lwp";
 	}
 
-	if (old == PBIND_NONE) {
-		if (new == PBIND_NONE)
+	if (old_ncpus == 0) {
+		if (new_ncpus == 0) {
 			(void) printf(gettext("%s id %s: was not bound, "
 			    "now not bound\n"), proclwp, pidstr);
-		else
+		} else {
+			ncpustr = cpu_string(new_ncpus, new_cpus);
 			(void) printf(gettext("%s id %s: was not bound, "
-			    "now %d\n"), proclwp, pidstr, new);
+			    "now %d\n"), proclwp, pidstr, ncpustr);
+			free(ncpustr);
+		}
 	} else {
-		if (new == PBIND_NONE)
+		if (new_ncpus == 0) {
+			ocpustr = cpu_string(old_ncpus, old_cpus);
 			(void) printf(gettext("%s id %s: was %d, "
-			    "now not bound\n"), proclwp, pidstr, old);
-		else
+			    "now not bound\n"), proclwp, pidstr, ocpustr);
+			free(ocpustr);
+		} else {
+			ocpustr = cpu_string(old_ncpus, old_cpus);
+			ncpustr = cpu_string(new_ncpus, new_cpus);
 			(void) printf(gettext("%s id %s: was %d, "
-			    "now %d\n"), proclwp, pidstr, old, new);
+			    "now %d\n"), proclwp, pidstr, ocpustr, ncpustr);
+			free(ocpustr);
+			free(ncpustr);
+		}
 	}
 }
 
@@ -215,18 +265,18 @@ rele_proc(struct ps_prochandle *Pr)
 }
 
 static void
-bind_lwp(struct ps_prochandle *Pr, id_t pid, id_t lwpid, processorid_t cpu)
+bind_lwp(struct ps_prochandle *Pr, pbind2_op_t op, id_t pid, id_t lwpid,
+    size_t ncpus, processorid_t *cpus)
 {
-	processorid_t old_cpu;
-
-	if (pr_processor_bind(Pr, P_LWPID, lwpid, cpu, &old_cpu) < 0) {
-		bind_err(cpu, pid, lwpid, errno);
+	if (pr_processor_bind2(Pr, op, P_LWPID, lwpid, &ncpus, cpus,
+	    NULL) < 0) {
+		bind_err(op, pid, lwpid, errno);
 		errors = ERR_FAIL;
 	} else {
 		if (qflag)
-			query_out(pid, lwpid, old_cpu);
+			query_out(pid, lwpid, ncpus, cpus);
 		else
-			bind_out(pid, lwpid, old_cpu, cpu);
+			bind_out(pid, lwpid, 0, NULL, ncpus, cpus);
 	}
 }
 
@@ -234,12 +284,14 @@ bind_lwp(struct ps_prochandle *Pr, id_t pid, id_t lwpid, processorid_t cpu)
  * Query, set, or clear bindings for the range of LWPs in the given process.
  */
 static int
-do_lwps(id_t pid, const char *range, processorid_t cpu)
+do_lwps(id_t pid, const char *range, pbind2_op_t op, size_t ncpus,
+    processorid_t *cpus)
 {
 	char procfile[MAX_PROCFS_PATH];
 	struct ps_prochandle *Pr;
 	struct prheader header;
-	processorid_t binding;
+	size_t bindnum;
+	processorid_t *binding;
 	struct lwpsinfo *lwp;
 	char *lpsinfo, *ptr;
 	int nent, size;
@@ -253,23 +305,23 @@ do_lwps(id_t pid, const char *range, processorid_t cpu)
 	if ((fd = open(procfile, O_RDONLY)) < 0) {
 		if (errno == ENOENT)
 			errno = ESRCH;
-		bind_err(cpu, pid, -1, errno);
+		bind_err(op, pid, -1, errno);
 		return (ERR_FAIL);
 	}
 	if (pread(fd, &header, sizeof (header), 0) != sizeof (header)) {
 		(void) close(fd);
-		bind_err(cpu, pid, -1, errno);
+		bind_err(op, pid, -1, errno);
 		return (ERR_FAIL);
 	}
 	nent = header.pr_nent;
 	size = header.pr_entsize * nent;
 	ptr = lpsinfo = malloc(size);
 	if (lpsinfo == NULL) {
-		bind_err(cpu, pid, -1, errno);
+		bind_err(op, pid, -1, errno);
 		return (ERR_FAIL);
 	}
 	if (pread(fd, lpsinfo, size, sizeof (header)) != size) {
-		bind_err(cpu, pid, -1, errno);
+		bind_err(op, pid, -1, errno);
 		free(lpsinfo);
 		(void) close(fd);
 		return (ERR_FAIL);
@@ -284,14 +336,15 @@ do_lwps(id_t pid, const char *range, processorid_t cpu)
 	for (i = 0; i < nent; i++, ptr += header.pr_entsize) {
 		/*LINTED ALIGNMENT*/
 		lwp = (lwpsinfo_t *)ptr;
-		binding = lwp->pr_bindpro;
+		bindnum = lwp->pr_bindnum;
+		binding = lwp->pr_bindpro2;
 		if (!proc_lwp_in_set(range, lwp->pr_lwpid))
 			continue;
 		found++;
 		if (bflag || uflag)
-			bind_lwp(Pr, pid, lwp->pr_lwpid, cpu);
-		else if (binding != PBIND_NONE)
-			query_out(pid, lwp->pr_lwpid, binding);
+			bind_lwp(Pr, op, pid, lwp->pr_lwpid, ncpus, cpus);
+		else if (bindnum != 0)
+			query_out(pid, lwp->pr_lwpid, bindnum, binding);
 	}
 	if (bflag || uflag)
 		rele_proc(Pr);
@@ -311,21 +364,23 @@ static int
 query_all_proc(psinfo_t *psinfo, lwpsinfo_t *lwpsinfo, void *arg)
 {
 	id_t pid = psinfo->pr_pid;
-	processorid_t binding;
+	size_t ncpus;
+	processorid_t *cpus;
 
-	if (processor_bind(P_PID, pid, PBIND_QUERY, &binding) < 0) {
+	if (processor_bind2(PBIND2_OP_QUERY, P_PID, pid, &ncpus, cpus,
+	    NULL) < 0) {
 		/*
 		 * Ignore search errors.  The process may have exited
 		 * since we read the directory.
 		 */
 		if (errno == ESRCH)
 			return (0);
-		bind_err(PBIND_QUERY, pid, -1, errno);
+		bind_err(PBIND2_OP_QUERY, pid, -1, errno);
 		errors = ERR_FAIL;
 		return (0);
 	}
-	if (binding != PBIND_NONE)
-		query_out(pid, -1, binding);
+	if (ncpus != 0)
+		query_out(pid, -1, ncpus, cpus);
 	return (0);
 }
 
@@ -335,13 +390,17 @@ query_all_lwp(psinfo_t *psinfo, lwpsinfo_t *lwpsinfo, void *arg)
 	id_t pid = psinfo->pr_pid;
 	id_t lwpid = lwpsinfo->pr_lwpid;
 	processorid_t *cpuid = arg;
-	processorid_t binding = lwpsinfo->pr_bindpro;
+	size_t ncpus = lwpsinfo->pr_bindnum;
+	processorid_t *cpus = lwpsinfo->pr_bindpro2;
 
 	if (psinfo->pr_nlwp == 1)
 		lwpid = -1;	/* report process bindings if only 1 lwp */
-	if ((cpuid != NULL && *cpuid == binding) ||
-	    (cpuid == NULL && binding != PBIND_NONE))
-		query_out(pid, lwpid, binding);
+
+	for (int i = 0; i < ncpus; i++) {
+		if ((cpuid != NULL && *cpuid == cpus[i]) ||
+		    (cpuid == NULL && ncpus != 0))
+			query_out(pid, lwpid, ncpus, cpus);
+	}
 	return (0);
 }
 
@@ -350,10 +409,11 @@ query_all_lwp(psinfo_t *psinfo, lwpsinfo_t *lwpsinfo, void *arg)
  * either executes cmd successfully or dies trying.
  */
 static void
-exec_cmd(processorid_t cpu, char *cmd, char **args)
+exec_cmd(size_t ncpus, processorid_t *cpus, char *cmd, char **args)
 {
-	if (processor_bind(P_PID, P_MYID, cpu, NULL) == -1) {
-		bind_err(cpu, getpid(), -1, errno);
+	if (processor_bind2(PBIND2_OP_SET, P_PID, P_MYID,
+		&ncpus, cpus, NULL) == -1) {
+		bind_err(PBIND2_OP_SET, getpid(), -1, errno);
 		exit(ERR_FAIL);
 	}
 
@@ -373,9 +433,37 @@ parse_cpu(char *str)
 
 	cpu = strtol(str, &endstr, 10);
 	if (endstr != NULL && *endstr != '\0' || cpu < 0)
-		die(gettext("invalid processor ID %s\n"), optarg);
+		die(gettext("invalid processor ID %s\n"), str);
 
 	return (cpu);
+}
+
+static void
+parse_cpus(char *str, size_t *oncpus, processorid_t **ocpus)
+{
+	processorid_t *cpus;
+	size_t ncpus = 0;
+	char *pos;
+	char *token;
+
+	/*
+	 * TODO: Just making it big enough for now. Eventualy, create
+	 * list and convert to array at the end.
+	 */
+	if ((cpus = malloc(512 * sizeof (processorid_t))) == NULL)
+		die(gettext("failed to malloc\n"));
+
+	/*
+	 * TODO: allow range specification, e.g. 1-3,6-9.
+	 */
+	token = strtok_r(str, ",", &pos);
+	while (token != NULL) {
+		cpus[ncpus++] = parse_cpu(token);
+		token = strtok_r(NULL, ",", &pos);
+	}
+
+	*oncpus = ncpus;
+	*ocpus = cpus;
 }
 
 static int
@@ -398,7 +486,10 @@ main(int argc, char *argv[])
 	int c;
 	int ret;
 	id_t pid;
-	processorid_t cpu, old_cpu;
+	pbind2_op_t op;
+	size_t ncpus, old_ncpus;
+	processorid_t cpu, *cpus, *old_cpus;
+	uchar_t flags = PBIND2_HARD;
 	char *endstr;
 
 	progname = argv[0];	/* put actual command name in messages */
@@ -411,27 +502,27 @@ main(int argc, char *argv[])
 
 		case 'b':
 			bflag = 1;
-			cpu = parse_cpu(optarg);
+			parse_cpus(optarg, &ncpus, &cpus);
 			break;
 
 		case 'e':
 			eflag = 1;
-			cpu = parse_cpu(optarg);
+			parse_cpus(optarg, &ncpus, &cpus);
 			break;
 
 		case 'q':
 			qflag = 1;
-			cpu = PBIND_QUERY;
+			op = PBIND2_OP_QUERY;
 			break;
 
 		case 'Q':
 			Qflag = 1;
-			cpu = PBIND_QUERY;
+			op = PBIND2_OP_QUERY;
 			break;
 
 		case 'u':
 			uflag = 1;
-			cpu = PBIND_NONE;
+			op = PBIND2_OP_CLEAR;
 			break;
 
 		case 'U':
@@ -451,7 +542,7 @@ main(int argc, char *argv[])
 	c = bflag + eflag + qflag + Qflag + uflag + Uflag;
 	if (c < 1) {				/* nothing specified */
 		qflag = 1;			/* default to query */
-		cpu = PBIND_QUERY;
+		cpu = PBIND2_OP_QUERY;
 	} else if (c > 1) {
 		warn(gettext("options -b, -e, -q, -Q, -u and -U "
 		    "are mutually exclusive\n"));
@@ -475,7 +566,8 @@ main(int argc, char *argv[])
 			return (usage());
 		}
 		if (Uflag) {
-			if (processor_bind(P_ALL, 0, PBIND_NONE, &old_cpu) != 0)
+			if (processor_bind2(PBIND2_OP_CLEAR, P_ALL, 0, NULL,
+				NULL, NULL) != 0)
 				die(gettext("failed to unbind some LWPs"));
 		}
 		if (Qflag) {
@@ -488,7 +580,7 @@ main(int argc, char *argv[])
 	}
 
 	if (eflag)
-		exec_cmd(cpu, argv[0], argv);
+		exec_cmd(ncpus, cpus, argv[0], argv);
 
 	if (Qflag || Uflag) {
 		/*
@@ -509,7 +601,7 @@ main(int argc, char *argv[])
 			}
 			if (Uflag) {
 				if (processor_bind(P_CPUID, cpu,
-				    PBIND_NONE, &old_cpu) != 0) {
+				    PBIND_NONE, NULL) != 0) {
 					warn(gettext("failed to unbind from "
 					    "processor %d"), (int)cpu);
 					errors = ERR_FAIL;
@@ -545,7 +637,9 @@ main(int argc, char *argv[])
 			}
 			if (!qflag)
 				(void) proc_initstdio();
-			ret = do_lwps(pid, lwps, qflag ? PBIND_QUERY : cpu);
+			ret = do_lwps(pid, lwps,
+			    qflag ? PBIND2_OP_QUERY : PBIND2_OP_SET,
+			    ncpus, cpus);
 			if (!qflag)
 				(void) proc_finistdio();
 			if (ret != ERR_OK)
@@ -554,15 +648,27 @@ main(int argc, char *argv[])
 			/*
 			 * Handle whole process case.
 			 */
-			if (processor_bind(P_PID, pid, cpu, &old_cpu) < 0) {
-				bind_err(cpu, pid, -1, errno);
+			/*
+			 * TODO: hardcoded.
+			 */
+			old_ncpus = 256;
+			if (processor_bind2(PBIND2_OP_QUERY, P_PID, pid,
+			    &old_ncpus, old_cpus, NULL) < 0) {
+				bind_err(PBIND2_OP_QUERY, pid, -1, errno);
+				errors = ERR_FAIL;
+				continue;
+			}
+
+			if (processor_bind2(PBIND2_OP_SET, P_PID, pid,
+				&ncpus, cpus, &flags) < 0) {
+				bind_err(PBIND2_OP_SET, pid, -1, errno);
 				errors = ERR_FAIL;
 				continue;
 			}
 			if (qflag)
-				query_out(pid, -1, old_cpu);
+				query_out(pid, -1, old_ncpus, old_cpus);
 			else
-				bind_out(pid, -1, old_cpu, cpu);
+				bind_out(pid, -1, old_ncpus, old_cpus, ncpus, cpus);
 		}
 	}
 	return (errors);

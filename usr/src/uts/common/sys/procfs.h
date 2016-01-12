@@ -264,6 +264,8 @@ typedef struct lwpsinfo {
 	char	pr_name[PRFNSZ];	/* name of system lwp */
 	processorid_t pr_onpro;		/* processor which last ran this lwp */
 	processorid_t pr_bindpro;	/* processor to which lwp is bound */
+	size_t	pr_bindnum;		/* number of CPUs bound to */
+	processorid_t *pr_bindpro2;	/* processors to which lwp is bound */
 	psetid_t pr_bindpset;	/* processor set to which lwp is bound */
 	int	pr_lgrp;	/* lwp home lgroup */
 	int	pr_filler[4];	/* reserved for future use */
@@ -670,6 +672,8 @@ typedef struct lwpsinfo32 {
 	char	pr_name[PRFNSZ];	/* name of system lwp */
 	processorid_t pr_onpro;		/* processor which last ran this lwp */
 	processorid_t pr_bindpro;	/* processor to which lwp is bound */
+	size_t pr_bindnum;
+	processorid_t *pr_bindpro2;
 	psetid_t pr_bindpset;	/* processor set to which lwp is bound */
 	int	pr_lgrp;	/* lwp home lgroup */
 	int	pr_filler[4];	/* reserved for future use */
