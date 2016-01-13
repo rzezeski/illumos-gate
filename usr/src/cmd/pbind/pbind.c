@@ -98,6 +98,8 @@ die(char *format, ...)
  *
  * TODO: normalize output to make use of ranges, e.g. turn 1,2,3,4
  * into 1-4.
+ *
+ * TODO: eliminate trailing comma.
  */
 static char *
 cpu_string(size_t ncpus, processorid_t *cpus)
@@ -542,7 +544,6 @@ main(int argc, char *argv[])
 	c = bflag + eflag + qflag + Qflag + uflag + Uflag;
 	if (c < 1) {				/* nothing specified */
 		qflag = 1;			/* default to query */
-		cpu = PBIND2_OP_QUERY;
 	} else if (c > 1) {
 		warn(gettext("options -b, -e, -q, -Q, -u and -U "
 		    "are mutually exclusive\n"));
@@ -652,6 +653,10 @@ main(int argc, char *argv[])
 			 * TODO: hardcoded.
 			 */
 			old_ncpus = 256;
+			old_cpus = malloc(old_ncpus * sizeof (processorid_t));
+			if (old_cpus == NULL)
+				die(gettext("failed to malloc\n"));
+
 			if (processor_bind2(PBIND2_OP_QUERY, P_PID, pid,
 			    &old_ncpus, old_cpus, NULL) < 0) {
 				bind_err(PBIND2_OP_QUERY, pid, -1, errno);
@@ -659,7 +664,7 @@ main(int argc, char *argv[])
 				continue;
 			}
 
-			if (processor_bind2(PBIND2_OP_SET, P_PID, pid,
+			if (bflag && processor_bind2(PBIND2_OP_SET, P_PID, pid,
 				&ncpus, cpus, &flags) < 0) {
 				bind_err(PBIND2_OP_SET, pid, -1, errno);
 				errors = ERR_FAIL;
@@ -669,6 +674,8 @@ main(int argc, char *argv[])
 				query_out(pid, -1, old_ncpus, old_cpus);
 			else
 				bind_out(pid, -1, old_ncpus, old_cpus, ncpus, cpus);
+
+			free(old_cpus);
 		}
 	}
 	return (errors);
