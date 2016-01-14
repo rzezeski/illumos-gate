@@ -903,7 +903,7 @@ pr_read_lpsinfo(prnode_t *pnp, uio_t *uiop)
 			sp->pr_start.tv_sec = lep->le_start;
 			sp->pr_bindpro = PBIND_NONE;
 			sp->pr_bindnum = 0;
-			sp->pr_bindpro2 = NULL;
+			bzero(sp->pr_bindpro2, 256 * sizeof (processorid_t));
 			sp->pr_bindpset = PS_NONE;
 		}
 		sp = (lwpsinfo_t *)((caddr_t)sp + LSPAN(lwpsinfo_t));
@@ -1523,7 +1523,7 @@ pr_read_lwpsinfo(prnode_t *pnp, uio_t *uiop)
 		lwpsinfo.pr_start.tv_sec = lep->le_start;
 		lwpsinfo.pr_bindpro = PBIND_NONE;
 		lwpsinfo.pr_bindnum = 0;
-		lwpsinfo.pr_bindpro2 = NULL;
+		bzero(lwpsinfo.pr_bindpro2, 256 * sizeof (processorid_t));
 		lwpsinfo.pr_bindpset = PS_NONE;
 	}
 	prunlock(pnp);

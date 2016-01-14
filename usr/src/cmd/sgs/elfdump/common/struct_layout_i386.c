@@ -147,7 +147,7 @@ static const sl_prstatus_layout_t prstatus_layout = {
 
 
 static const sl_psinfo_layout_t psinfo_layout = {
-	{ 0,	344,	0,	0 },		/* sizeof (psinfo_t) */
+	{ 0,	1364,	0,	0 },		/* sizeof (psinfo_t) */
 	{ 0,	4,	0,	1 },		/* pr_flag */
 	{ 4,	4,	0,	1 },		/* pr_nlwp */
 	{ 8,	4,	0,	0 },		/* pr_pid */
@@ -180,7 +180,7 @@ static const sl_psinfo_layout_t psinfo_layout = {
 	{ 216,	4,	0,	0 },		/* pr_poolid */
 	{ 220,	4,	0,	0 },		/* pr_zoneid */
 	{ 224,	4,	0,	0 },		/* pr_contract */
-	{ 232,	112,	0,	0 },		/* pr_lwp */
+	{ 232,	1132,	0,	0 },		/* pr_lwp */
 };
 
 
@@ -229,7 +229,7 @@ static const sl_prpsinfo_layout_t prpsinfo_layout = {
 
 
 static const sl_lwpsinfo_layout_t lwpsinfo_layout = {
-	{ 0,	112,	0,	0 },		/* sizeof (lwpsinfo_t) */
+	{ 0,	1132,	0,	0 },		/* sizeof (lwpsinfo_t) */
 	{ 0,	4,	0,	1 },		/* pr_flag */
 	{ 4,	4,	0,	0 },		/* pr_lwpid */
 	{ 8,	4,	0,	0 },		/* pr_addr */
@@ -250,9 +250,9 @@ static const sl_lwpsinfo_layout_t lwpsinfo_layout = {
 	{ 72,	4,	0,	1 },		/* pr_onpro */
 	{ 76,	4,	0,	1 },		/* pr_bindpro */
 	{ 80,	4,	0,	0 },		/* pr_bindnum */
-	{ 84,	4,	0,	0 },		/* pr_bindpro2 */
-	{ 88,	4,	0,	1 },		/* pr_bindpset */
-	{ 92,	4,	0,	1 },		/* pr_lgrp */
+	{ 84,	4,	256,	1 },		/* pr_bindpro2[] */
+	{ 1108,	4,	0,	1 },		/* pr_bindpset */
+	{ 1112,	4,	0,	1 },		/* pr_lgrp */
 };
 
 

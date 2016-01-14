@@ -2290,7 +2290,7 @@ prgetpsinfo(proc_t *p, psinfo_t *psp)
 		psp->pr_lwp.pr_sname = 'Z';
 		psp->pr_lwp.pr_bindpro = PBIND_NONE;
 		psp->pr_lwp.pr_bindnum = 0;
-		psp->pr_lwp.pr_bindpro2 = NULL;
+		bzero(psp->pr_lwp.pr_bindpro2, 256 * sizeof (processorid_t));
 		psp->pr_lwp.pr_bindpset = PS_NONE;
 	} else {
 		user_t *up = PTOU(p);
@@ -2560,10 +2560,11 @@ prgetlwpsinfo(kthread_t *t, lwpsinfo_t *psp)
 	psp->pr_bindpro = t->t_bind_cpu;
 	psp->pr_bindnum = t->t_bind_ncpus;
 	/*
-	 * TODO: pr_bindpro2 and t_bind_cpus are different types, deal
-	 * with this later.
+	 * TODO: hack hack hack
 	 */
-	psp->pr_bindpro2 = NULL;
+	for (int i = 0; i < t->t_bind_ncpus; i++)
+		psp->pr_bindpro2[i] = (processorid_t)t->t_bind_cpus[i];
+
 	psp->pr_bindpset = t->t_bind_pset;
 	psp->pr_lgrp = t->t_lpl->lpl_lgrpid;
 }
@@ -2636,10 +2637,11 @@ prgetlwpsinfo32(kthread_t *t, lwpsinfo32_t *psp)
 	psp->pr_bindpro = t->t_bind_cpu;
 	psp->pr_bindnum = t->t_bind_ncpus;
 	/*
-	 * TODO: pr_bindpro2 and t_bind_cpus are different types, deal
-	 * with this later.
+	 * TODO: hack hack hack
 	 */
-	psp->pr_bindpro2 = NULL;
+	for (int i = 0; i < t->t_bind_ncpus; i++)
+		psp->pr_bindpro2[i] = (processorid_t)t->t_bind_cpus[i];
+
 	psp->pr_bindpset = t->t_bind_pset;
 	psp->pr_lgrp = t->t_lpl->lpl_lgrpid;
 }
@@ -2686,7 +2688,7 @@ lwpsinfo_kto32(const struct lwpsinfo *src, struct lwpsinfo32 *dest)
 	PR_COPY_FIELD(src, dest, pr_onpro);
 	PR_COPY_FIELD(src, dest, pr_bindpro);
 	PR_COPY_FIELD(src, dest, pr_bindnum);
-	PR_COPY_FIELD(src, dest, pr_bindpro2);
+	PR_COPY_BUF(src, dest, pr_bindpro2);
 	PR_COPY_FIELD(src, dest, pr_bindpset);
 	PR_COPY_FIELD(src, dest, pr_lgrp);
 }

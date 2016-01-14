@@ -366,7 +366,7 @@ gen_lwpsinfo(void)
 	SCALAR_FIELD(lwpsinfo_t,	pr_onpro,	1);
 	SCALAR_FIELD(lwpsinfo_t,	pr_bindpro,	1);
 	SCALAR_FIELD(lwpsinfo_t,	pr_bindnum,	0);
-	SCALAR_FIELD(lwpsinfo_t,	pr_bindpro2,	0);
+	ARRAY_FIELD(lwpsinfo_t,		pr_bindpro2,	1);
 	SCALAR_FIELD(lwpsinfo_t,	pr_bindpset,	1);
 	SCALAR_FIELD(lwpsinfo_t,	pr_lgrp,	1);
 
