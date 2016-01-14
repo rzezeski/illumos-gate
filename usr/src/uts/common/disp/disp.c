@@ -2577,9 +2577,16 @@ disp_bound_common(cpu_t *cp, int threadlistsafe, int flag)
 			if (tp == cp->cpu_pause_thread)
 				continue;
 
+			/*
+			 * TODO: whew doggy, clean this up.
+			 */
 			if ((flag & BOUND_CPU) &&
 			    (tp->t_bound_cpu == cp ||
 			    tp->t_bind_cpu == cp->cpu_id ||
+			    (tp->t_bind_ncpus > 0 &&
+				cpu_find(cp->cpu_id,
+				    tp->t_bind_ncpus,
+				    tp->t_bind_cpus) == B_TRUE) ||
 			    tp->t_weakbound_cpu == cp)) {
 				found = 1;
 				break;
