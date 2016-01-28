@@ -337,6 +337,12 @@ cpupart_move_cpu(cpu_t *cp, cpupart_t *newpp, int forced)
 	ASSERT(oldpp != NULL);
 	ASSERT(oldpp->cp_ncpus > 0);
 
+	/*
+	 * TODO: why would the system ever move a cpu to the partition
+	 * to which it already belongs? Seems like it should be
+	 * considered a logical bug. Though, this check means it
+	 * doesn't hurt anything.
+	 */
 	if (newpp == oldpp) {
 		/*
 		 * Don't need to do anything.
@@ -405,11 +411,20 @@ cpupart_move_cpu(cpu_t *cp, cpupart_t *newpp, int forced)
 	pg_cpupart_out(cp, oldpp);
 	pg_cpupart_in(cp, newpp);
 
+	/*
+	 * RPZ: move_threads is 1 IFF threads are bound to the same
+	 * partition as the moving CPU and it's not the last CPU in
+	 * the partition.
+	 */
+
 again:
 	if (move_threads) {
 		int loop_count;
 		/*
 		 * Check for threads strong or weak bound to this CPU.
+		 *
+		 * RPZ: wait 5 seconds (probably ticks) for threads to
+		 * move off CPU.
 		 */
 		for (loop_count = 0; disp_bound_threads(cp, 0); loop_count++) {
 			if (loop_count >= 5) {
@@ -455,6 +470,11 @@ again:
 		}
 
 	}
+
+	/*
+	 * RPZ: at this point we know no threads are bound to this
+	 * cpu.
+	 */
 
 	/*
 	 * Now that CPUs are paused, let the PG subsystem perform
@@ -567,6 +587,12 @@ again:
 				ASSERT(t->t_lpl->lpl_ncpu > 0);
 
 				/* Update CPU last ran on if it was this CPU */
+
+				/*
+				 * TODO: need to update this to look
+				 * at t_bind_cpus and to use
+				 * disp_lowpri_cpu2().
+				 */
 				if (t->t_cpu == cp && t->t_cpupart == oldpp &&
 				    t->t_bound_cpu != cp) {
 					t->t_cpu = disp_lowpri_cpu(ncp,
@@ -581,6 +607,9 @@ again:
 			 * the process lgroup bitmask.
 			 */
 
+			/*
+			 * TODO: shouldn't this be lgrp_diff_lpl == 0?
+			 */
 			if (lgrp_diff_lpl)
 				klgrpset_del(p->p_lgrpset, lgrpid);
 		}
@@ -620,6 +649,11 @@ again:
 			ASSERT(t->t_lpl->lpl_ncpu > 0);
 
 			/* Update CPU last ran on if it was this CPU */
+
+			/*
+			 * TODO: udpate to use t_bind_cpus and
+			 * disp_lowpri_cpu2().
+			 */
 			if (t->t_cpu == cp && t->t_cpupart == oldpp &&
 			    t->t_bound_cpu != cp) {
 				t->t_cpu = disp_lowpri_cpu(ncp, t->t_lpl,

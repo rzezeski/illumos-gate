@@ -554,6 +554,9 @@ grow:
 	 * with an lwp.
 	 */
 	ASSERT(oldpart != NULL);
+	/*
+	 * TODO: do I have to do anything for t_bind_cpus here?
+	 */
 	if (binding != PBIND_NONE && t->t_affinitycnt == 0) {
 		t->t_bound_cpu = cpu[binding];
 		if (t->t_lpl != t->t_bound_cpu->cpu_lpl)
