@@ -1,0 +1,17 @@
+* Update the following with new syscall processor_bind2
+  * corenote.msg
+  * audit_event.txt
+  * various man pages
+  * audit event code
+  * system-kernel-man2.inc
+  * pool.c
+
+* Update all places referencing `pr_bindpro`.
+* Update `proc(4)` re `lwpsinfo`.
+* Update `cpu_offline()`, only check `t_bound_cpu`. Need to replace
+  use of `t_bound_cpu` with field indicating bound state: kernel or
+  user or either.
+* Update `cpupart_move_cpu()`.
+* Multiple threads sharing the same binding have issues because both
+  point to the same allocated memory `t_bind_cpus`.
+* Update DTrace translator for `curlwpsinfo` for new fields.
