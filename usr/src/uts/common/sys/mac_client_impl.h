@@ -172,6 +172,10 @@ typedef enum {
 	 * This client has no MAC unicast addresss associated with it.
 	 */
 	MCIS_NO_UNICAST_ADDR		= 1 << 13,
+	/*
+	 * This client has requested that TCP LRO be performed.
+	 */
+	MCIS_RX_TCP_LRO			= 1 << 14,
 } mac_client_state_t;
 
 /*
