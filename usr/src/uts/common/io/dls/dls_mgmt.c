@@ -21,7 +21,7 @@
 /*
  * Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
- * Copyright (c) 2017 Joyent, Inc.
+ * Copyright 2019 Joyent, Inc.
  */
 /*
  * Copyright (c) 2016 by Delphix. All rights reserved.
@@ -1052,6 +1052,31 @@ dls_devnet_unset(mac_handle_t mh, datalink_id_t *id, boolean_t wait)
 			} else {
 				if (ddp->dd_transient) {
 					zone_status_t s = zone_status_get(zp);
+
+					/*
+					 *  A transient link held by
+					 *  just its non-global zone
+					 *  will have two references:
+					 *  one from dls_devnet_set()
+					 *  at creation time, and one
+					 *  from dls_devnet_setzid()
+					 *  when assigning the link to
+					 *  the NGZ. If there are more
+					 *  than two references, then
+					 *  something from outside the
+					 *  zone has a hold on it
+					 *  (e.g., someone running
+					 *  snoop from the global
+					 *  zone). We cannot proceed
+					 *  until these other
+					 *  references are released.
+					 */
+					if (ddp->dd_ref > 2) {
+						zone_rele(zp);
+						mutex_exit(&ddp->dd_mutex);
+						rw_exit(&i_dls_devnet_lock);
+						return (EBUSY);
+					}
 
 					if (s >= ZONE_IS_SHUTTING_DOWN)
 						zstatus = 1;
