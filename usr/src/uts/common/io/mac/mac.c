@@ -21,7 +21,7 @@
 
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2017, Joyent, Inc.
+ * Copyright 2019 Joyent, Inc.
  * Copyright 2015 Garrett D'Amore <garrett@damore.org>
  */
 
@@ -631,6 +631,7 @@ i_mac_ring_dtor(void *buf, void *arg)
  * physically deletes and frees up the logically deleted entries when the walk
  * is complete.
  */
+/* ARGSUSED */
 void
 mac_callback_add(mac_cb_info_t *mcbi, mac_cb_t **mcb_head,
     mac_cb_t *mcb_elem)
@@ -2093,11 +2094,10 @@ mac_srs_perm_quiesce(mac_client_handle_t mch, boolean_t on)
 {
 	mac_client_impl_t	*mcip = (mac_client_impl_t *)mch;
 	flow_entry_t		*flent = mcip->mci_flent;
-	mac_impl_t		*mip = mcip->mci_mip;
 	mac_soft_ring_set_t	*mac_srs;
 	int			i;
 
-	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
+	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
 
 	if (flent == NULL)
 		return;
@@ -2117,9 +2117,8 @@ void
 mac_rx_client_quiesce(mac_client_handle_t mch)
 {
 	mac_client_impl_t	*mcip = (mac_client_impl_t *)mch;
-	mac_impl_t		*mip = mcip->mci_mip;
 
-	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
+	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
 
 	if (MCIP_DATAPATH_SETUP(mcip)) {
 		(void) mac_rx_classify_flow_quiesce(mcip->mci_flent,
@@ -2133,9 +2132,8 @@ void
 mac_rx_client_restart(mac_client_handle_t mch)
 {
 	mac_client_impl_t	*mcip = (mac_client_impl_t *)mch;
-	mac_impl_t		*mip = mcip->mci_mip;
 
-	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
+	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
 
 	if (MCIP_DATAPATH_SETUP(mcip)) {
 		(void) mac_rx_classify_flow_restart(mcip->mci_flent, NULL);
@@ -2152,10 +2150,7 @@ mac_rx_client_restart(mac_client_handle_t mch)
 void
 mac_tx_srs_quiesce(mac_soft_ring_set_t *srs, uint_t srs_quiesce_flag)
 {
-	mac_client_impl_t	*mcip = srs->srs_mcip;
-
-	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
-
+	ASSERT(MAC_PERIM_HELD((mac_handle_t)srs->srs_mcip->mci_mip));
 	ASSERT(srs->srs_type & SRST_TX);
 	ASSERT(srs_quiesce_flag == SRS_CONDEMNED ||
 	    srs_quiesce_flag == SRS_QUIESCE);
@@ -4412,7 +4407,6 @@ i_mac_group_add_ring(mac_group_t *group, mac_ring_t *ring, int index)
 	mac_impl_t *mip = (mac_impl_t *)group->mrg_mh;
 	mac_capab_rings_t *cap_rings;
 	boolean_t driver_call = (ring == NULL);
-	mac_group_type_t group_type;
 	int ret = 0;
 	flow_entry_t *flent;
 
@@ -4455,6 +4449,19 @@ i_mac_group_add_ring(mac_group_t *group, mac_ring_t *ring, int index)
 		 * the underlying driver to support dynamic grouping,
 		 * and the mac_ring_t already exists.
 		 */
+#ifdef DEBUG
+		mac_group_type_t group_type;
+
+		switch (group->mrg_type) {
+		case MAC_RING_TYPE_RX:
+			group_type = mip->mi_rx_group_type;
+			break;
+		case MAC_RING_TYPE_TX:
+			group_type = mip->mi_tx_group_type;
+			break;
+		}
+#endif
+
 		ASSERT(group_type == MAC_GROUP_TYPE_DYNAMIC);
 		ASSERT(group->mrg_driver == NULL ||
 		    cap_rings->mr_gaddring != NULL);
@@ -4635,7 +4642,6 @@ i_mac_group_rem_ring(mac_group_t *group, mac_ring_t *ring,
 {
 	mac_impl_t *mip = (mac_impl_t *)group->mrg_mh;
 	mac_capab_rings_t *cap_rings = NULL;
-	mac_group_type_t group_type;
 
 	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
 
@@ -4648,7 +4654,6 @@ i_mac_group_rem_ring(mac_group_t *group, mac_ring_t *ring,
 		mac_stop_ring(ring);
 	switch (ring->mr_type) {
 	case MAC_RING_TYPE_RX:
-		group_type = mip->mi_rx_group_type;
 		cap_rings = &mip->mi_rx_rings_cap;
 
 		/*
@@ -4732,7 +4737,6 @@ i_mac_group_rem_ring(mac_group_t *group, mac_ring_t *ring,
 			break;
 		}
 		ASSERT(ring != (mac_ring_t *)mip->mi_default_tx_ring);
-		group_type = mip->mi_tx_group_type;
 		cap_rings = &mip->mi_tx_rings_cap;
 		/*
 		 * See if we need to take it out of the MAC clients using
@@ -4821,6 +4825,19 @@ i_mac_group_rem_ring(mac_group_t *group, mac_ring_t *ring,
 	group->mrg_cur_count--;
 
 	if (!driver_call) {
+#ifdef DEBUG
+		mac_group_type_t group_type;
+
+		switch (ring->mr_type) {
+		case MAC_RING_TYPE_RX:
+			group_type = mip->mi_rx_group_type;
+			break;
+		case MAC_RING_TYPE_TX:
+			group_type = mip->mi_tx_group_type;
+			break;
+		}
+#endif
+
 		ASSERT(group_type == MAC_GROUP_TYPE_DYNAMIC);
 		ASSERT(group->mrg_driver == NULL ||
 		    cap_rings->mr_gremring != NULL);
@@ -7426,6 +7443,7 @@ mac_bridge_set(mac_handle_t mh, mac_handle_t link)
 /*
  * Disable bridging on the indicated link.
  */
+/* ARGSUSED */
 void
 mac_bridge_clear(mac_handle_t mh, mac_handle_t link)
 {

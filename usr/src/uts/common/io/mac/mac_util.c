@@ -20,6 +20,7 @@
  */
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright 2019 Joyent, Inc.
  */
 
 /*
@@ -890,6 +891,7 @@ mac_get_devinfo(mac_handle_t mh)
 #define	PKT_HASH_4BYTES(x) ((x)[0] ^ (x)[1] ^ (x)[2] ^ (x)[3])
 #define	PKT_HASH_MAC(x) ((x)[0] ^ (x)[1] ^ (x)[2] ^ (x)[3] ^ (x)[4] ^ (x)[5])
 
+/* ARGSUSED */
 uint64_t
 mac_pkt_hash(uint_t media, mblk_t *mp, uint8_t policy, boolean_t is_outbound)
 {

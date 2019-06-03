@@ -21,7 +21,7 @@
 /*
  * Copyright 2010 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
- * Copyright 2017 Joyent, Inc.
+ * Copyright 2019 Joyent, Inc.
  * Copyright 2013 Nexenta Systems, Inc. All rights reserved.
  */
 
@@ -2567,7 +2567,6 @@ void
 mac_rx_srs_drain(mac_soft_ring_set_t *mac_srs, uint_t proc_type)
 {
 	mblk_t			*head;
-	mblk_t			*tail;
 	timeout_id_t		tid;
 	int			cnt = 0;
 	mac_client_impl_t	*mcip = mac_srs->srs_mcip;
@@ -2605,16 +2604,15 @@ mac_rx_srs_drain(mac_soft_ring_set_t *mac_srs, uint_t proc_type)
 		MAC_SRS_POLL_RING(mac_srs);
 	}
 
-again:
+again
+	ASSERT(mac_srs->srs_first != NULL);
+	ASSERT(mac_srs->srs_last != NULL);
+
 	head = mac_srs->srs_first;
 	mac_srs->srs_first = NULL;
-	tail = mac_srs->srs_last;
 	mac_srs->srs_last = NULL;
 	cnt = mac_srs->srs_count;
 	mac_srs->srs_count = 0;
-
-	ASSERT(head != NULL);
-	ASSERT(tail != NULL);
 
 	if ((tid = mac_srs->srs_tid) != NULL)
 		mac_srs->srs_tid = NULL;
@@ -3448,11 +3446,11 @@ mac_tx_srs_no_desc(mac_soft_ring_set_t *mac_srs, mblk_t *mp_chain,
 	mac_tx_cookie_t cookie = 0;
 	mac_srs_tx_t *srs_tx = &mac_srs->srs_tx;
 	boolean_t wakeup_worker = B_TRUE;
-	uint32_t tx_mode = srs_tx->st_mode;
 	int cnt, sz;
 	mblk_t *tail;
 
-	ASSERT(tx_mode == SRS_TX_DEFAULT || tx_mode == SRS_TX_BW);
+	ASSERT(srs_tx->st_mode == SRS_TX_DEFAULT ||
+	    srs_tx->st_mode == SRS_TX_BW);
 	if (flag & MAC_DROP_ON_NO_DESC) {
 		MAC_TX_SRS_DROP_MESSAGE(mac_srs, mp_chain, cookie);
 	} else {

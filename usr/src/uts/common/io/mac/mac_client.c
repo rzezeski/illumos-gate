@@ -21,7 +21,7 @@
 
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2014, Joyent, Inc.  All rights reserved.
+ * Copyright 2019 Joyent, Inc.
  * Copyright 2017 RackTop Systems.
  */
 
@@ -844,12 +844,11 @@ mac_sdu_get2(mac_handle_t mh, uint_t *min_sdu, uint_t *max_sdu,
 static void
 mac_unicast_update_client_flow(mac_client_impl_t *mcip)
 {
-	mac_impl_t *mip = mcip->mci_mip;
 	flow_entry_t *flent = mcip->mci_flent;
 	mac_address_t *map = mcip->mci_unicast;
 	flow_desc_t flow_desc;
 
-	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
+	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
 	ASSERT(flent != NULL);
 
 	mac_flow_get_desc(flent, &flow_desc);
@@ -1545,9 +1544,8 @@ boolean_t
 mac_rx_bypass_set(mac_client_handle_t mch, mac_direct_rx_t rx_fn, void *arg1)
 {
 	mac_client_impl_t	*mcip = (mac_client_impl_t *)mch;
-	mac_impl_t		*mip = mcip->mci_mip;
 
-	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
+	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
 
 	/*
 	 * If the mac_client is a VLAN, we should not do DLS bypass and
@@ -1631,10 +1629,9 @@ mac_secondary_dup(mac_client_handle_t smch, mac_client_handle_t dmch)
 {
 	mac_client_impl_t *smcip = (mac_client_impl_t *)smch;
 	mac_client_impl_t *dmcip = (mac_client_impl_t *)dmch;
-	flow_entry_t *flent = dmcip->mci_flent;
 
 	/* This should only be called to setup secondary macs */
-	ASSERT((flent->fe_type & FLOW_PRIMARY_MAC) == 0);
+	ASSERT((dmcip->mci_flent->fe_type & FLOW_PRIMARY_MAC) == 0);
 
 	mac_rx_set(dmch, smcip->mci_rx_fn, smcip->mci_rx_arg);
 	dmcip->mci_promisc_list = smcip->mci_promisc_list;
@@ -1655,10 +1652,9 @@ void
 mac_secondary_cleanup(mac_client_handle_t mch)
 {
 	mac_client_impl_t *mcip = (mac_client_impl_t *)mch;
-	flow_entry_t *flent = mcip->mci_flent;
 
 	/* This should only be called for secondary macs */
-	ASSERT((flent->fe_type & FLOW_PRIMARY_MAC) == 0);
+	ASSERT((mcip->mci_flent->fe_type & FLOW_PRIMARY_MAC) == 0);
 	mcip->mci_promisc_list = NULL;
 }
 
@@ -4717,12 +4713,21 @@ mac_rename_primary(mac_handle_t mh, const char *new_name)
 	if (mip->mi_state_flags & MIS_IS_AGGR) {
 		mac_capab_aggr_t aggr_cap;
 		mac_rename_fn_t rename_fn;
+#ifdef DEBUG
 		boolean_t ret;
+#endif
 
 		ASSERT(new_name != NULL);
+
+#ifdef DEBUG
 		ret = i_mac_capab_get((mac_handle_t)mip, MAC_CAPAB_AGGR,
 		    (void *)(&aggr_cap));
 		ASSERT(ret == B_TRUE);
+#else
+		(void) i_mac_capab_get((mac_handle_t)mip, MAC_CAPAB_AGGR,
+		    (void *)(&aggr_cap));
+#endif
+
 		rename_fn = aggr_cap.mca_rename_fn;
 		rename_fn(new_name, mip->mi_driver);
 		/*
@@ -4947,7 +4952,9 @@ mac_client_swap_mciflent(mac_client_impl_t *mcip)
 	flow_entry_t	*flent1;
 	flow_desc_t	fl_desc;
 	char		fl_name[MAXFLOWNAMELEN];
+#ifdef DEBUG
 	int		err;
+#endif
 
 	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
 	ASSERT(mcip->mci_nflents > 1);
@@ -4986,11 +4993,15 @@ mac_client_swap_mciflent(mac_client_impl_t *mcip)
 	mutex_exit(&flent1->fe_lock);
 
 	/* now reinsert the flow entries in the table */
+#ifdef DEBUG
 	err = mac_flow_add(ft, flent);
 	ASSERT(err == 0);
-
 	err = mac_flow_add(ft, flent1);
 	ASSERT(err == 0);
+#else
+	(void) mac_flow_add(ft, flent);
+	(void) mac_flow_add(ft, flent1);
+#endif
 
 	return (flent1);
 }

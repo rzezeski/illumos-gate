@@ -21,6 +21,7 @@
 /*
  * Copyright 2010 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
+ * Copyright 2019 Joyent, Inc.
  */
 
 #include <sys/types.h>
@@ -652,11 +653,10 @@ mac_client_bcast_refresh(mac_client_impl_t *mcip, mac_multicst_t refresh_fn,
     void *arg, boolean_t add)
 {
 	mac_mcast_addrs_t *grp, *next;
-	mac_impl_t		*mip = mcip->mci_mip;
 
 	ASSERT(refresh_fn != NULL);
+	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
 
-	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
 	/*
 	 * Walk the multicast address list and call the refresh function for
 	 * each address.

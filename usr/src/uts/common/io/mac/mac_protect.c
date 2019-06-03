@@ -21,7 +21,7 @@
 
 /*
  * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2015, Joyent, Inc.  All rights reserved.
+ * Copyright 2019 Joyent, Inc.
  */
 /*
  * Copyright 2014 Nexenta Systems, Inc.  All rights reserved.

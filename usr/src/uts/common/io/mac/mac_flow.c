@@ -22,6 +22,7 @@
 /*
  * Copyright 2010 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
+ * Copyright 2019 Joyent, Inc.
  */
 
 #include <sys/strsun.h>
@@ -623,7 +624,9 @@ mac_flow_walk(flow_tab_t *ft, int (*fn)(flow_entry_t *, void *),
 	return (err);
 }
 
+#ifdef DEBUG
 static boolean_t	mac_flow_clean(flow_entry_t *);
+#endif
 
 /*
  * Destroy a flow entry. Called when the last reference on a flow is released.
@@ -817,6 +820,7 @@ mac_flow_wait(flow_entry_t *flent, mac_flow_state_t event)
 	mutex_exit(&flent->fe_lock);
 }
 
+/* ARGSUSED */
 static boolean_t
 mac_flow_clean(flow_entry_t *flent)
 {
@@ -895,7 +899,6 @@ mac_flow_set_desc(flow_entry_t *flent, flow_desc_t *fd)
 {
 	flow_tab_t	*ft = flent->fe_flow_tab;
 	flow_desc_t	old_desc;
-	int		err;
 
 	if (ft == NULL) {
 		/*
@@ -930,8 +933,11 @@ mac_flow_set_desc(flow_entry_t *flent, flow_desc_t *fd)
 		 * Undo the update
 		 */
 		flent->fe_flow_desc = old_desc;
-		err = mac_flow_add(ft, flent);
-		ASSERT(err == 0);
+#ifdef DEBUG
+		ASSERT0(mac_flow_add(ft, flent));
+#else
+		(void) mac_flow_add(ft, flent);
+#endif
 	}
 }
 
@@ -1187,11 +1193,10 @@ int
 mac_link_flow_init(mac_client_handle_t mch, flow_entry_t *sub_flow)
 {
 	mac_client_impl_t 	*mcip = (mac_client_impl_t *)mch;
-	mac_impl_t		*mip = mcip->mci_mip;
 	int			err;
 
 	ASSERT(mch != NULL);
-	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
+	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
 
 	if ((err = mac_datapath_setup(mcip, sub_flow, SRST_FLOW)) != 0)
 		return (err);
@@ -1321,11 +1326,10 @@ void
 mac_link_flow_clean(mac_client_handle_t mch, flow_entry_t *sub_flow)
 {
 	mac_client_impl_t 	*mcip = (mac_client_impl_t *)mch;
-	mac_impl_t		*mip = mcip->mci_mip;
 	boolean_t		last_subflow;
 
 	ASSERT(mch != NULL);
-	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
+	ASSERT(MAC_PERIM_HELD((mac_handle_t)mcip->mci_mip));
 
 	/*
 	 * This sub flow entry may fail to be fully initialized by
@@ -2077,6 +2081,7 @@ flow_ip_proto_hash_fe(flow_tab_t *ft, flow_entry_t *flent)
 	return (fd->fd_protocol % ft->ft_size);
 }
 
+/* ARGSUSED */
 static uint32_t
 flow_ip_hash_fe(flow_tab_t *ft, flow_entry_t *flent)
 {

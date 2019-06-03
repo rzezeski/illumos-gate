@@ -20,7 +20,7 @@
  */
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
- * Copyright 2017, Joyent, Inc.
+ * Copyright 2019 Joyent, Inc.
  */
 
 #include <sys/types.h>
@@ -3346,7 +3346,6 @@ mac_srs_fanout_list_free(mac_soft_ring_set_t *mac_srs)
 static void
 mac_srs_ring_free(mac_soft_ring_set_t *mac_srs)
 {
-	mac_client_impl_t	*mcip;
 	mac_ring_t		*ring;
 	flow_entry_t		*flent;
 
@@ -3364,8 +3363,7 @@ mac_srs_ring_free(mac_soft_ring_set_t *mac_srs)
 	 * use only soft rings.
 	 */
 	flent = mac_srs->srs_flent;
-	mcip = flent->fe_mcip;
-	ASSERT(mcip != NULL);
+	ASSERT(flent->fe_mcip != NULL);
 
 	ring->mr_classify_type = MAC_NO_CLASSIFIER;
 	ring->mr_srs = NULL;
@@ -3488,10 +3486,7 @@ mac_srs_worker_quiesce(mac_soft_ring_set_t *mac_srs)
 void
 mac_srs_signal(mac_soft_ring_set_t *mac_srs, uint_t srs_flag)
 {
-	mac_ring_t	*ring;
-
-	ring = mac_srs->srs_ring;
-	ASSERT(ring == NULL || ring->mr_refcnt == 0);
+	ASSERT(mac_srs->srs_ring == NULL || mac_srs->srs_ring->mr_refcnt == 0);
 
 	if (srs_flag == SRS_CONDEMNED) {
 		/*
@@ -3725,11 +3720,8 @@ mac_tx_srs_add_ring(mac_soft_ring_set_t *mac_srs, mac_ring_t *tx_ring)
 static void
 mac_soft_ring_remove(mac_soft_ring_set_t *mac_srs, mac_soft_ring_t *softring)
 {
-	int sringcnt;
-
 	mutex_enter(&mac_srs->srs_lock);
-	sringcnt = mac_srs->srs_soft_ring_count;
-	ASSERT(sringcnt > 0);
+	ASSERT(mac_srs->srs_soft_ring_count > 0);
 	mac_soft_ring_signal(softring, S_RING_CONDEMNED);
 
 	ASSERT(mac_srs->srs_soft_ring_condemned_count == 0);
