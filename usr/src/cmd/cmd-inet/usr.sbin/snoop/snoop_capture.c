@@ -22,6 +22,7 @@
  * Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  * Copyright 2012 Milan Jurik. All rights reserved.
+ * Copyright 2019 Joyent, Inc.
  */
 
 #include <stdio.h>
@@ -205,11 +206,6 @@ init_datalink(dlpi_handle_t dh, ulong_t snaplen, ulong_t chunksize,
 		}
 	} else {
 		(void) fprintf(stderr, "(non promiscuous)\n");
-		retv = dlpi_promiscon(dh, DL_PROMISC_MULTI);
-		if (retv != DLPI_SUCCESS) {
-			pr_errdlpi(dh, "promiscuous mode(multicast) failed",
-			    retv);
-		}
 	}
 
 	retv = dlpi_promiscon(dh, DL_PROMISC_SAP);
