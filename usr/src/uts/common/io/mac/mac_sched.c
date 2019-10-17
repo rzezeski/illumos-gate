@@ -4455,10 +4455,13 @@ mac_tx_send(mac_client_handle_t mch, mac_ring_handle_t ring, mblk_t *mp_chain,
 				    dst_mcip->mci_state_flags &
 				    MCIS_CLIENT_POLL_CAPABLE) != 0);
 
-				(dst_flow_ent->fe_cb_fn)(
-				    dst_flow_ent->fe_cb_arg1,
-				    dst_flow_ent->fe_cb_arg2,
-				    mp, do_switch);
+				mac_hw_emul(&mp, NULL, NULL, MAC_ALL_EMULS);
+				if (mp != NULL) {
+					(dst_flow_ent->fe_cb_fn)(
+						dst_flow_ent->fe_cb_arg1,
+						dst_flow_ent->fe_cb_arg2,
+						mp, do_switch);
+				}
 
 			}
 			FLOW_REFRELE(dst_flow_ent);

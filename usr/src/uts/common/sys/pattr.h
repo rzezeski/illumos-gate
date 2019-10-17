@@ -109,21 +109,36 @@ typedef struct pattr_hcksum_s {
 #define	HW_LSO_FLAGS		HW_LSO	/* All LSO flags, currently only one */
 
 /*
- * The packet originates from a MAC on the same machine as the
- * receiving MAC. There are two ways this can happen.
+ * The packet originates from a mac on the same machine as the
+ * receiving mac. There are two ways this can happen.
  *
- * 1. MAC loopback: When a packet is destined for a MAC client on the
- *                  same MAC as the sender. This datapath is taken in
+ * 1. mac-loopback: When a packet is destined for a mac client on the
+ *                  same mac as the sender. This datapath is taken in
  *                  max_tx_send().
  *
- * 2. Bridge Fwd: When a packet is destined for a MAC client on the
+ * 2. Bridge Fwd: When a packet is destined for a mac client on the
  *                same bridge as the sender. This datapath is taken in
  *                bridge_forward().
  *
- * Presented with this flag, a receiver can then decide whether or not
- * it needs to emulate some or all of the HW offloads that the NIC
- * would have performed otherwise -- or whether it should accept the
- * packet as-is.
+ * Previously, this flag was used by mac clients to determine if a
+ * packet originated from the same host, and if so, potentially
+ * emulate hardware offloads that were skipped by virtue of the fact
+ * that the mblk never reached a driver. This allowed clients to elide
+ * hardware offload emulation in the case where they didn't require it
+ * (e.g., IP happily accepting LSO packets with incomplete or missing
+ * checksums knowing that they came from the same machine). However,
+ * this optimization was backed out due to a preponderance of edge
+ * cases and code bloat. Now all hardware offload emulation happens as
+ * part of Tx.
+ *
+ * However, this flag is still used by the promisc path to determine
+ * when it should apply "fix ups", and having this flag around could
+ * help with future debugging. Furthermore, if we bring back the
+ * offload elision in the future, by way of some client negotiation
+ * with mac, this flag could prove useful once again (especially since
+ * HCK_IPV4_HDRCKSUM and HCK_IPV4_HDRCKSUM_OK still have the same
+ * value which leaves HW_LOCAL_MAC as the only way to differentiate a
+ * "local" packet from one that came in from the wire).
  */
 #define	HW_LOCAL_MAC		0x100
 
