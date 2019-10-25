@@ -33,8 +33,9 @@
 ******************************************************************************/
 /*$FreeBSD$*/
 
-
-#include "ixgbe.h"
+#include "ixgbe_api.h"
+#include "ixgbe_type.h"
+#include "ixgbe_vf.h"
 
 #ifndef IXGBE_VFWRITE_REG
 #define IXGBE_VFWRITE_REG IXGBE_WRITE_REG
