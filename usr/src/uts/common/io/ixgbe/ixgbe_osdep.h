@@ -59,7 +59,7 @@ extern "C" {
 #include "ixgbe_debug.h"
 
 /* Cheesy hack for EWARN() */
-#define	EWARN(H, W, S) cmn_err(CE_NOTE, W)
+#define	EWARN(H, W) cmn_err(CE_NOTE, W)
 
 /* function declarations */
 struct ixgbe_hw;
@@ -111,15 +111,19 @@ boolean_t ixgbe_removed(struct ixgbe_hw *);
 #define	IXGBE_NTOHS	ntohs
 
 #ifdef _BIG_ENDIAN
+#define	IXGBE_CPU_TO_LE16	BSWAP_16
 #define	IXGBE_CPU_TO_LE32	BSWAP_32
 #define	IXGBE_LE32_TO_CPUS	BSWAP_32
 #define	IXGBE_CPU_TO_BE16(x)	(x)
 #define	IXGBE_CPU_TO_BE32(x)	(x)
+#define	IXGBE_BE32_TO_CPU(x)	(x)
 #else
+#define	IXGBE_CPU_TO_LE16(x)	(x)
 #define	IXGBE_CPU_TO_LE32(x)	(x)
 #define	IXGBE_LE32_TO_CPUS(x)	(x)
 #define	IXGBE_CPU_TO_BE16	BSWAP_16
 #define	IXGBE_CPU_TO_BE32	BSWAP_32
+#define	IXGBE_BE32_TO_CPU	BSWAP_32
 #endif /* _BIG_ENDIAN */
 
 #define	UNREFERENCED_PARAMETER(x)		_NOTE(ARGUNUSED(x))
