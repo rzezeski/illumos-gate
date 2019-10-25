@@ -105,3 +105,4 @@ usr/src/data/hwdata/usb.ids
 usr/src/data/perfmon/readme.txt
 usr/src/cmd/smbsrv/testoplock/case*.ref
 usr/src/test/util-tests/tests/dis/i386/*.out
+usr/src/uts/common/io/ixgbe/core/*
