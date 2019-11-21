@@ -548,10 +548,21 @@ ixgbe_m_stat(void *arg, uint_t stat, uint64_t *val)
 		break;
 
 	case MAC_STAT_NORCVBUF:
-		for (i = 0; i < 8; i++) {
+		/*
+		 * The QPRDC[0] register maps to the same kstat as the
+		 * old RNBC register because they have equivalent
+		 * semantics.
+		 */
+		if (hw->mac.type == ixgbe_mac_82598EB) {
+			for (i = 0; i < 8; i++) {
+				ixgbe_ks->rnbc.value.ui64 +=
+				    IXGBE_READ_REG(hw, IXGBE_RNBC(i));
+			}
+		} else {
 			ixgbe_ks->rnbc.value.ui64 +=
-			    IXGBE_READ_REG(hw, IXGBE_RNBC(i));
+			    IXGBE_READ_REG(hw, IXGBE_QPRDC(0));
 		}
+
 		*val = ixgbe_ks->rnbc.value.ui64;
 		break;
 

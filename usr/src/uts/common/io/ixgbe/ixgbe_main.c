@@ -2463,7 +2463,7 @@ ixgbe_setup_rx(ixgbe_t *ixgbe)
 	struct ixgbe_hw *hw = &ixgbe->hw;
 	uint32_t reg_val;
 	uint32_t ring_mapping;
-	uint32_t i, index;
+	uint32_t i;
 	uint32_t psrtype_rss_bit;
 
 	/*
@@ -2578,13 +2578,46 @@ ixgbe_setup_rx(ixgbe_t *ixgbe)
 	}
 
 	/*
-	 * Setup the per-ring statistics mapping.
+	 * The 82598 controller gives us the RNBC (Receive No Buffer
+	 * Count) register to determine the number of frames dropped
+	 * due to no available descriptors on the destination queue.
+	 * However, this register was removed starting with 82599 and
+	 * it was replaced with the RQSMR/QPRDC registers. The nice
+	 * thing about the new registers is that they allow you to map
+	 * groups of queues to specific stat registers. The bad thing
+	 * is there are only 16 slots in the stat registers, so this
+	 * won't work when we have 32 Rx groups. Instead, we map all
+	 * queues to the zero slot of the stat registers, giving us a
+	 * global counter at QPRDC[0] (with the equivalent semantics
+	 * of RNBC). Perhaps future controllers will have more slots
+	 * and we can implement per-group counters.
+	 *
+	 * QPRC[n]: Queue Packets Received Count, the number of
+	 *          packets received on the queues mapped to this slot.
+	 *
+	 * QBRC_L[n]
+	 * QBRC_H[n]: Queue Bytes Received Count (Low/High), the
+	 *            number of bytes received by the queues mapped to
+	 *            this slot.
+	 *
+	 * QPRDC[n]: Queue Packets Received Drop Count, the number of
+	 *           packets dropped by queues mapped to this slot.
 	 */
-	ring_mapping = 0;
 	for (i = 0; i < ixgbe->num_rx_rings; i++) {
-		index = ixgbe->rx_rings[i].hw_index;
-		ring_mapping = IXGBE_READ_REG(hw, IXGBE_RQSMR(index >> 2));
-		ring_mapping |= (i & 0xF) << (8 * (index & 0x3));
+		uint32_t index = ixgbe->rx_rings[i].hw_index;
+
+		/*
+		 * There are 32 RQSMR slots, each 4 bytes wide
+		 * representing Q_MAP[0] - Q_MAP[3]. That gives us 128
+		 * Q_MAP bytes for the 128 rings. Each Q_MAP byte
+		 * contains a number representing the stat register
+		 * slot assigned to the queue.
+		 *
+		 * 'index >> 2': map index to 1 of the 32 the Q_MAP ararys.
+		 * '(8 * (index & 0x3))': map index to Q_MAP[0-4] byte.
+		 * '(0 & 0xF)': map the queue to register slot 0.
+		 */
+		ring_mapping = (0 & 0xF) << (8 * (index & 0x3));
 		IXGBE_WRITE_REG(hw, IXGBE_RQSMR(index >> 2), ring_mapping);
 	}
 
