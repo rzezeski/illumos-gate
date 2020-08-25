@@ -200,7 +200,7 @@ log_init(void)
 	 * Create a backlog queue to consume console messages during periods
 	 * when there is no console reader (e.g. before syslogd(1M) starts).
 	 */
-	log_backlogq = log_consq = log_makeq(0, LOG_HIWAT, NULL);
+	log_backlogq = log_consq = log_makeq(0, LOG_HIWAT * 64, NULL);
 
 	/*
 	 * Create a queue to hold free message of size <= LOG_MSGSIZE.

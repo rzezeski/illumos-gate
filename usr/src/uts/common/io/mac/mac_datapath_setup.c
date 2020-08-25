@@ -2900,6 +2900,8 @@ mac_datapath_setup(mac_client_impl_t *mcip, flow_entry_t *flent,
 		no_unicast = mcip->mci_state_flags & MCIS_NO_UNICAST_ADDR;
 		mac_addr = flent->fe_flow_desc.fd_dst_mac;
 
+		cmn_err(CE_NOTE, "mac_datapath_setup SRST_LINK");
+
 		/* Default RX group */
 		default_rgroup = MAC_DEFAULT_RX_GROUP(mip);
 
@@ -2993,6 +2995,7 @@ mac_datapath_setup(mac_client_impl_t *mcip, flow_entry_t *flent,
 		 * even be a default group.
 		 */
 	grp_found:
+		cmn_err(CE_NOTE, "mac_datapath_setup groups found");
 		if (rgroup != NULL) {
 			if (rgroup != default_rgroup &&
 			    MAC_GROUP_NO_CLIENT(rgroup) &&
@@ -3016,6 +3019,7 @@ mac_datapath_setup(mac_client_impl_t *mcip, flow_entry_t *flent,
 			 * all broadcast and multicast traffic. This
 			 * case is handled later in the function.
 			 */
+			cmn_err(CE_NOTE, "calling Rx mac_group_add_client()");
 			mac_group_add_client(rgroup, mcip);
 			next_state = mac_group_next_state(rgroup,
 			    &group_only_mcip, default_rgroup, B_TRUE);
@@ -3034,6 +3038,7 @@ mac_datapath_setup(mac_client_impl_t *mcip, flow_entry_t *flent,
 				}
 			}
 			flent->fe_tx_ring_group = tgroup;
+			cmn_err(CE_NOTE, "calling Tx mac_group_add_client()");
 			mac_group_add_client(tgroup, mcip);
 			next_state = mac_group_next_state(tgroup,
 			    &group_only_mcip, default_tgroup, B_FALSE);
@@ -3046,14 +3051,17 @@ mac_datapath_setup(mac_client_impl_t *mcip, flow_entry_t *flent,
 			break;
 		}
 
+		cmn_err(CE_NOTE, "calling mac_flow_add()");
 		/* Program software classification. */
 		if ((err = mac_flow_add(mip->mi_flow_tab, flent)) != 0)
 			goto setup_failed;
 
 		/* Program hardware classification. */
+		cmn_err(CE_NOTE, "calling mac_add_macaddr_vlan()");
 		vid = i_mac_flow_vid(flent);
 		use_hw = (mcip->mci_state_flags & MCIS_UNICAST_HW) != 0;
 		err = mac_add_macaddr_vlan(mip, rgroup, mac_addr, vid, use_hw);
+		cmn_err(CE_NOTE, "mac_add_macaddr_vlan => %d", err);
 
 		if (err != 0)
 			goto setup_failed;

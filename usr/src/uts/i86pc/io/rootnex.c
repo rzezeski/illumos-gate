@@ -2696,27 +2696,49 @@ rootnex_valid_alloc_parms(ddi_dma_attr_t *attr, uint_t maxsegmentsize)
 	    (attr->dma_attr_count_max < MMU_PAGEOFFSET) ||
 	    (attr->dma_attr_granular > MMU_PAGESIZE) ||
 	    (attr->dma_attr_maxxfer < MMU_PAGESIZE)) {
+		cmn_err(CE_WARN, "MMU_PAGEOFFSET: %u MMU_PAGESIZE: %u",
+		    MMU_PAGEOFFSET, MMU_PAGESIZE);
+		cmn_err(CE_WARN, "dma_attr_seg: 0x%lx "
+		    "dma_attr_count_max: 0x%lx "
+		    "dma_attr_granular: 0x%x dma_attr_maxxfer: 0x%lx",
+		    attr->dma_attr_seg, attr->dma_attr_count_max,
+		    attr->dma_attr_granular, attr->dma_attr_maxxfer);
 		return (DDI_DMA_BADATTR);
 	}
 
 	if (attr->dma_attr_addr_hi <= attr->dma_attr_addr_lo) {
+		cmn_err(CE_WARN, "dma_attr_addr_hi: 0x%lx dma_attr_addr_lo: "
+		    "0x%lx", attr->dma_attr_addr_hi, attr->dma_attr_addr_lo);
 		return (DDI_DMA_BADATTR);
 	}
 
 	if ((attr->dma_attr_seg & MMU_PAGEOFFSET) != MMU_PAGEOFFSET ||
 	    MMU_PAGESIZE & (attr->dma_attr_granular - 1) ||
 	    attr->dma_attr_sgllen == 0) {
+		cmn_err(CE_WARN, "dma_attr_seg: 0x%lx MMU_PAGEOFFSET: %u "
+		    "MMU_PAGESIZE: %u dma_attr_granular: 0x%x "
+		    "dma_attr_sgllen: %u", attr->dma_attr_seg,
+		    MMU_PAGEOFFSET, MMU_PAGESIZE, attr->dma_attr_granular,
+		    attr->dma_attr_sgllen);
+
 		return (DDI_DMA_BADATTR);
 	}
 
 	/* We should be able to DMA into every byte offset in a page */
 	if (maxsegmentsize < MMU_PAGESIZE) {
+		cmn_err(CE_WARN, "maxsegmentsize: %u MMU_PAGEOFFSET: %u ",
+		    maxsegmentsize, MMU_PAGESIZE);
+
 		return (DDI_DMA_BADATTR);
 	}
 
 	/* if we're bouncing on seg, seg must be <= addr_hi */
 	if ((attr->dma_attr_flags & _DDI_DMA_BOUNCE_ON_SEG) &&
 	    (attr->dma_attr_seg > attr->dma_attr_addr_hi)) {
+		cmn_err(CE_WARN, "dma_attr_seg: 0x%lx dma_attr_flags: 0x%x "
+		    "dma_attr_hi: 0x%lx", attr->dma_attr_seg,
+		    attr->dma_attr_flags, attr->dma_attr_addr_hi);
+
 		return (DDI_DMA_BADATTR);
 	}
 	return (DDI_SUCCESS);
@@ -2999,6 +3021,15 @@ rootnex_get_sgl(ddi_dma_obj_t *dmar_object, ddi_dma_cookie_t *sgl,
 	if (((sglinfo->si_bounce_on_seg) &&
 	    ((raddr + psize) > sglinfo->si_segmask)) ||
 	    ((raddr < addrlo) || ((raddr + psize) > addrhi))) {
+		DTRACE_PROBE7(rootnex__sgl__a,
+		    uint16_t, cnt + 1,
+		    boolean_t, sglinfo->si_bounce_on_seg,
+		    rootnex_addr_t, raddr,
+		    uint32_t, psize,
+		    uint64_t, sglinfo->si_segmask,
+		    uint64_t, addrlo,
+		    uint64_t, addrhi);
+
 		/*
 		 * Increase how much copy buffer we use. We always increase by
 		 * pagesize so we don't have to worry about converting offsets.
@@ -3058,6 +3089,14 @@ rootnex_get_sgl(ddi_dma_obj_t *dmar_object, ddi_dma_cookie_t *sgl,
 		if (((sglinfo->si_bounce_on_seg) &&
 		    ((raddr + psize) > sglinfo->si_segmask)) ||
 		    ((raddr < addrlo) || ((raddr + psize) > addrhi))) {
+			DTRACE_PROBE7(rootnex__sgl__b,
+			    uint16_t, cnt + 1,
+			    boolean_t, sglinfo->si_bounce_on_seg,
+			    rootnex_addr_t, raddr,
+			    uint32_t, psize,
+			    uint64_t, sglinfo->si_segmask,
+			    uint64_t, addrlo,
+			    uint64_t, addrhi);
 
 			sglinfo->si_copybuf_req += MMU_PAGESIZE;
 
@@ -3105,6 +3144,15 @@ rootnex_get_sgl(ddi_dma_obj_t *dmar_object, ddi_dma_cookie_t *sgl,
 			 * cookie.
 			 */
 			if (sgl[cnt].dmac_size != 0) {
+				DTRACE_PROBE7(rootnex__sgl__2,
+				    uint16_t, cnt + 1,
+				    uint64_t, last_page,
+				    rootnex_addr_t, raddr,
+				    uint32_t, psize,
+				    uint64_t, sglinfo->si_segmask,
+				    uint64_t, maxseg,
+				    size_t, sgl[cnt].dmac_size);
+
 				cnt++;
 			}
 
@@ -3135,6 +3183,12 @@ rootnex_get_sgl(ddi_dma_obj_t *dmar_object, ddi_dma_cookie_t *sgl,
 			 */
 			if (((sgl[cnt].dmac_size + psize) == maxseg) &&
 			    ((cnt + 1) < sglinfo->si_max_pages)) {
+				DTRACE_PROBE4(rootnex__sgl__3,
+				    uint16_t, cnt + 1,
+				    uint32_t, psize,
+				    uint64_t, maxseg,
+				    size_t, sgl[cnt].dmac_size);
+
 				cnt++;
 				sgl[cnt].dmac_laddress = 0;
 				sgl[cnt].dmac_size = 0;
@@ -3149,13 +3203,20 @@ rootnex_get_sgl(ddi_dma_obj_t *dmar_object, ddi_dma_cookie_t *sgl,
 		 */
 		last_page = raddr;
 		size -= psize;
+		DTRACE_PROBE3(rootnex__sgl__while, uint16_t, cnt,
+		    uint64_t, last_page, uint32_t, size);
 	}
 
 	/* we're done, save away how many cookies the sgl has */
 	if (sgl[cnt].dmac_size == 0) {
 		ASSERT(cnt < sglinfo->si_max_pages);
+		DTRACE_PROBE1(rootnex__sgl__0, uint16_t, cnt);
 		sglinfo->si_sgl_size = cnt;
 	} else {
+		DTRACE_PROBE2(rootnex__sgl__4,
+		    uint16_t, cnt + 1,
+		    size_t, sgl[cnt].dmac_size);
+
 		sglinfo->si_sgl_size = cnt + 1;
 	}
 }
@@ -3214,11 +3275,21 @@ rootnex_dvma_get_sgl(ddi_dma_obj_t *dmar_object, ddi_dma_cookie_t *sgl,
 		if (!physcontig || !(paddr & sglinfo->si_segmask) ||
 		    ((sgl[cnt].dmac_size + psize) > maxseg) ||
 		    (sgl[cnt].dmac_size == 0)) {
+
 			/*
 			 * if we're not already in a new cookie, go to the next
 			 * cookie.
 			 */
 			if (sgl[cnt].dmac_size != 0) {
+				DTRACE_PROBE7(rootnex__dvma__sgl__1,
+				    uint_t, cnt + 1,
+				    boolean_t, physcontig,
+				    uint64_t, paddr,
+				    uint64_t, sglinfo->si_segmask,
+				    size_t, sgl[cnt].dmac_size,
+				    uint32_t, psize,
+				    uint64_t, maxseg);
+
 				cnt++;
 			}
 
@@ -3235,6 +3306,16 @@ rootnex_dvma_get_sgl(ddi_dma_obj_t *dmar_object, ddi_dma_cookie_t *sgl,
 			 */
 			if (((sgl[cnt].dmac_size + psize) == maxseg) &&
 			    ((cnt + 1) < sglinfo->si_max_pages)) {
+				DTRACE_PROBE8(rootnex__dvma__sgl__2,
+				    uint_t, cnt + 1,
+				    boolean_t, physcontig,
+				    uint64_t, paddr,
+				    uint64_t, sglinfo->si_segmask,
+				    size_t, sgl[cnt].dmac_size,
+				    uint32_t, psize,
+				    uint64_t, maxseg,
+				    uint_t, sglinfo->si_max_pages);
+
 				cnt++;
 				sgl[cnt].dmac_laddress = 0;
 				sgl[cnt].dmac_size = 0;
@@ -3248,6 +3329,9 @@ rootnex_dvma_get_sgl(ddi_dma_obj_t *dmar_object, ddi_dma_cookie_t *sgl,
 	if (sgl[cnt].dmac_size == 0) {
 		sglinfo->si_sgl_size = cnt;
 	} else {
+		DTRACE_PROBE2(rootnex__dvma__sgl__3,
+		    uint_t, cnt + 1,
+		    size_t, sgl[cnt].dmac_size);
 		sglinfo->si_sgl_size = cnt + 1;
 	}
 }

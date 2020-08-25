@@ -58,6 +58,7 @@ dls_open(dls_link_t *dlp, dls_dl_handle_t ddh, dld_str_t *dsp)
 	 * legacy drivers would make the shared-lower-stream to stay in
 	 * the DL_IDLE state, which in turn causes performance regression.
 	 */
+	cmn_err(CE_WARN, "dls_open: %s", dlp->dl_name);
 	if (!mac_capab_get(dlp->dl_mh, MAC_CAPAB_LEGACY, NULL) &&
 	    ((err = mac_start(dlp->dl_mh)) != 0)) {
 		return (err);
@@ -654,6 +655,7 @@ dls_mac_active_set(dls_link_t *dlp)
 		    MAC_UNICAST_PRIMARY | MAC_UNICAST_TAG_DISABLE |
 		    MAC_UNICAST_DISABLE_TX_VID_CHECK, &dlp->dl_mah,
 		    VLAN_ID_NONE, &diag)) != 0) {
+			cmn_err(CE_NOTE, "mac_unicast_add => %d", err);
 			return (err);
 		}
 

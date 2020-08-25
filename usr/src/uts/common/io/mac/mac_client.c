@@ -2369,6 +2369,7 @@ mac_client_datapath_setup(mac_client_impl_t *mcip, uint16_t vid,
 		 * This will allocate the RX ring group if possible for the
 		 * flow and program the software classifier as needed.
 		 */
+		cmn_err(CE_NOTE, "calling mac_datapath_setup");
 		if ((err = mac_datapath_setup(mcip, flent, SRST_LINK)) != 0)
 			goto bail;
 
@@ -2859,6 +2860,7 @@ i_mac_unicast_add(mac_client_handle_t mch, uint8_t *mac_addr, uint16_t flags,
 		return (0);
 	}
 
+	cmn_err(CE_NOTE, "call mac_client_datapath_setup");
 	err = mac_client_datapath_setup(mcip, vid, mac_addr, mrp,
 	    is_primary || is_vnic_primary, muip);
 	if (err != 0)

@@ -773,6 +773,10 @@ $(OBJS_DIR)/%.o:		$(UTSBASE)/common/io/elxl/%.c
 	$(COMPILE.c) -o $@ $<
 	$(CTFCONVERT_O)
 
+$(OBJS_DIR)/%.o:		$(UTSBASE)/common/io/ena/%.c
+	$(COMPILE.c) -o $@ $<
+	$(CTFCONVERT_O)
+
 $(OBJS_DIR)/%.o:		$(UTSBASE)/common/io/fcoe/%.c
 	$(COMPILE.c) -o $@ $<
 	$(CTFCONVERT_O)
