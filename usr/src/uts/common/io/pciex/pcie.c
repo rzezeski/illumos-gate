@@ -632,6 +632,7 @@ pcie_initchild(dev_info_t *cdip)
 	uint16_t		tmp16, reg16;
 	pcie_bus_t		*bus_p;
 	uint32_t		devid, venid;
+	char			*cpath;
 
 	bus_p = PCIE_DIP2BUS(cdip);
 	if (bus_p == NULL) {
@@ -643,6 +644,13 @@ pcie_initchild(dev_info_t *cdip)
 
 	if (pcie_init_cfghdl(cdip) != DDI_SUCCESS)
 		return (DDI_FAILURE);
+
+	cpath = kmem_alloc(MAXPATHLEN, KM_SLEEP);
+	(void)ddi_pathname(cdip, cpath);
+	/* if (strstr(cpath, "8061") != NULL) { */
+	/* 	pcie_dbg_print = 1; */
+	/* 	cmn_err(CE_NOTE, "--- 8061 pcie_initchild() entry ---"); */
+	/* } */
 
 	/*
 	 * Update pcie_bus_t with real Vendor Id Device Id.
@@ -674,6 +682,7 @@ pcie_initchild(dev_info_t *cdip)
 	/* Setup the device's command register */
 	reg16 = PCIE_GET(16, bus_p, PCI_CONF_COMM);
 	tmp16 = (reg16 & pcie_command_default_fw) | pcie_command_default;
+
 
 #if defined(__i386) || defined(__amd64)
 	boolean_t empty_io_range = B_FALSE;
@@ -759,7 +768,7 @@ pcie_initchild(dev_info_t *cdip)
 		/* Enable PCIe errors */
 		pcie_enable_errors(cdip);
 
-		pcie_determine_serial(cdip);
+		/* pcie_determine_serial(cdip); */
 
 		pcie_determine_aspm(cdip);
 
@@ -772,6 +781,12 @@ pcie_initchild(dev_info_t *cdip)
 	    == PCIE_ARI_DEVICE)) {
 		bus_p->bus_ari = B_TRUE;
 	}
+
+	/* if (strstr(cpath, "8061") != NULL) { */
+	/* 	pcie_dbg_print = 0; */
+	/* 	cmn_err(CE_NOTE, "--- 8061 pcie_initchild() return ---"); */
+	/* } */
+	kmem_free(cpath, MAXPATHLEN);
 
 	if (pcie_initchild_mps(cdip) == DDI_FAILURE) {
 		pcie_fini_cfghdl(cdip);
@@ -1455,6 +1470,9 @@ pcie_init_bus(dev_info_t *dip, pcie_req_id_t bdf, uint8_t flags)
 	bus_p->bus_hdr_type = pci_cfgacc_get8(rcdip, bdf, PCI_CONF_HEADER);
 	bus_p->bus_hdr_type &= PCI_HEADER_TYPE_M;
 
+	cmn_err(CE_WARN, "pcie_init_buss bdf: 0x%x, dev_ven_id: 0x%x",
+	    bus_p->bus_bdf, bus_p->bus_dev_ven_id);
+
 	/*
 	 * Figure out the device type and all the relavant capability offsets
 	 */
@@ -1654,7 +1672,7 @@ initial_done:
 
 final_done:
 
-	PCIE_DBG("Add %s(dip 0x%p, bdf 0x%x, secbus 0x%x)\n",
+	cmn_err(CE_WARN, "Add %s(dip 0x%p, bdf 0x%x, secbus 0x%x)\n",
 	    ddi_driver_name(dip), (void *)dip, bus_p->bus_bdf,
 	    bus_p->bus_bdg_secbus);
 #ifdef DEBUG
@@ -1864,6 +1882,13 @@ pcie_enable_errors(dev_info_t *dip)
 	}
 
 	/* Enable Root Port Baseline Error Receiving */
+	/*
+	 * RPZ: Won't this return all zeros? Which would cause us to
+	 * write to the root ctl even if it doesn't apply to this
+	 * device?
+	 *
+	 * RPZ: Turn on debug.
+	 */
 	if (PCIE_IS_ROOT(bus_p) &&
 	    (reg16 = PCIE_CAP_GET(16, bus_p, PCIE_ROOTCTL)) !=
 	    PCI_CAP_EINVAL16) {

@@ -20,6 +20,7 @@
  */
 /*
  * Copyright 2014 Garrett D'Amore <garrett@damore.org>
+ * Copyright 2020 Oxide Computer Company
  *
  * Copyright 2009 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
@@ -138,6 +139,8 @@ struct ether_vlan_extinfo {
 #else
 #define	ether_copy(a, b) (bcopy((caddr_t)a, (caddr_t)b, 6))
 #endif
+
+#define	ETHER_IS_MULTICAST(addr)	(((addr)[0] & 0x01) != 0)
 
 #ifdef	_KERNEL
 extern int localetheraddr(struct ether_addr *, struct ether_addr *);

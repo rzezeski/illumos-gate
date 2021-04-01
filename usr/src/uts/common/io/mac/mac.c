@@ -502,6 +502,7 @@ void
 mac_init_ops(struct dev_ops *ops, const char *name)
 {
 	major_t major = ddi_name_to_major((char *)name);
+	cmn_err(CE_WARN, "mac_init_ops %s", name);
 
 	/*
 	 * By returning on error below, we are not letting the driver continue
@@ -1165,6 +1166,8 @@ mac_start(mac_handle_t mh)
 
 	ASSERT(MAC_PERIM_HELD((mac_handle_t)mip));
 	ASSERT(mip->mi_start != NULL);
+
+	cmn_err(CE_NOTE, "mac_start %s", mip->mi_name);
 
 	/*
 	 * Check whether the device is already started.
@@ -5546,6 +5549,14 @@ mac_add_macaddr_vlan(mac_impl_t *mip, mac_group_t *group, uint8_t *addr,
 	 * driver filters the primary address by default; promisc mode
 	 * is not needed.
 	 */
+	cmn_err(CE_NOTE, "mac_add_macaddr_vlan group: 0x%p", group);
+	cmn_err(CE_NOTE, "mac_add_macaddr_vlan ma_addr: %x:%x:%x:%x:%x:%x",
+	    map->ma_addr[0], map->ma_addr[1], map->ma_addr[2], map->ma_addr[3],
+	    map->ma_addr[4], map->ma_addr[5]);
+	cmn_err(CE_NOTE, "mac_add_macaddr_vlan mi_addr: %x:%x:%x:%x:%x:%x",
+	    mip->mi_addr[0], mip->mi_addr[1], mip->mi_addr[2], mip->mi_addr[3],
+	    mip->mi_addr[4], mip->mi_addr[5]);
+
 	if ((group == NULL) &&
 	    (bcmp(map->ma_addr, mip->mi_addr, map->ma_len) == 0)) {
 		map->ma_type = MAC_ADDRESS_TYPE_UNICAST_CLASSIFIED;

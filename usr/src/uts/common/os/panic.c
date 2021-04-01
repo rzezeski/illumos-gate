@@ -181,6 +181,7 @@ int panic_bootfcn = AD_BOOT;		/* mdboot function to use after panic */
 int halt_on_panic = 0;			/* halt after dump instead of reboot? */
 int nopanicdebug = 0;			/* reboot instead of call debugger? */
 int in_sync = 0;			/* skip vfs_syncall() and just dump? */
+int rpz_spin = 1;
 
 /*
  * The do_polled_io flag is set by the panic code to inform the SCSI subsystem
@@ -383,6 +384,9 @@ panicsys(const char *format, va_list alist, struct regs *rp, int on_panic_stack)
 		debug_enter("panic: entering debugger (continue to reboot)");
 	} else
 		printf("dump aborted: please record the above information!\n");
+
+	if (rpz_spin)
+		goto spin;
 
 	if (halt_on_panic)
 		mdboot(A_REBOOT, AD_HALT, NULL, B_FALSE);
