@@ -1,0 +1,43 @@
+#
+# This file and its contents are supplied under the terms of the
+# Common Development and Distribution License ("CDDL"), version 1.0.
+# You may only use this file in accordance with the terms of version
+# 1.0 of the CDDL.
+#
+# A full copy of the text of the CDDL should have accompanied this
+# source.  A copy of the CDDL is also available via the Internet at
+# http://www.illumos.org/license/CDDL.
+#
+
+#
+# Copyright 2021 Oxide Computer Company
+#
+
+<include global_zone_only_component>
+set name=pkg.fmri value=pkg:/driver/ktest@$(PKGVERS)
+set name=pkg.description value="Kernel Test Driver"
+set name=pkg.summary value="Kernel Test Driver"
+set name=info.classification \
+    value=org.opensolaris.category.2008:Development/System
+set name=variant.arch value=i386
+dir path=kernel group=sys
+dir path=kernel/drv group=sys
+dir path=kernel/drv/$(ARCH64) group=sys
+dir path=kernel/misc group=sys
+dir path=kernel/misc/ktest group=sys
+dir path=kernel/misc/ktest/$(ARCH64) group=sys
+dir path=usr/bin
+dir path=usr/include
+dir path=usr/include/sys
+dir path=usr/lib/devfsadm group=sys
+dir path=usr/lib/devfsadm/linkmod group=sys
+dir path=usr/share/man
+dir path=usr/share/man/man7d
+driver name=ktest
+file path=kernel/drv/$(ARCH64)/ktest group=sys
+file path=kernel/drv/ktest.conf group=sys
+file path=usr/bin/ktest mode=0555
+file path=usr/include/sys/ktest.h mode=0644
+# file path=usr/lib/devfsadm/linkmod/SUNW_ktest_link.so group=sys
+# file path=usr/share/man/man7d/ktest.7d
+license lic_CDDL license=lic_CDDL

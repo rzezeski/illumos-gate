@@ -490,7 +490,6 @@ mac_fini(void)
 	mod_hash_destroy_hash(i_mactype_hash);
 	mac_soft_ring_finish();
 
-
 	return (0);
 }
 

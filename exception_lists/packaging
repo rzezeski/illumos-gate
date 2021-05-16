@@ -899,3 +899,9 @@ opt/onbld/man/man1onbld/sgsmsg.1onbld
 # The built link-editor demos are not delivered
 #
 opt/SUNWonld/
+
+#
+# Private ktest definitions which are only needed by the ktest
+# implementation -- which is fully controlled by gate.
+#
+usr/include/sys/ktest_impl.h

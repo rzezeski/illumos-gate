@@ -1,0 +1,848 @@
+:toc:
+:toclevels: 5
+
+= Kernel Test Facility
+
+This readme is out of date, please see IPD 20.
+
+== Steps to gate
+
+* [x] initial bring up with main functonality
+* [x] add some tests as examples
+* [x] add byte steam input mechanism
+* [x] initial demo
+* [x] initial dev document (this file)
+** [x] document how to get input stream from context object
+** [x] document test registration API
+** [x] document where test modules live
+** [x] document basics of ktest cmd
+* [x] add copyright to everything
+* [x] add stream tests
+* [x] research/document other test-related modules/tools and how they
+  might work with ktest (some of these I know nothing about and may
+  not even be relevant today, found them in `Makefile.intel`)
+** [x] usr/src/test: userland test framework + tests
+** [x] pshot: pseudo bus nexus driver, allows testing hotplug framework
+** [x] libfakekernel
+** [x] gen_drv: generic character device
+** [x] emul64
+* [x] IPD draft
+* [x] remove "raw" messages
+* [x] consolidate mod-list/load
+* [ ] implement mod-unload
+* [ ] more mac tests?
+* [ ] remove mac:dummy suite
+* [ ] preliminary CR/webrev
+* [ ] IPD push
+* [ ] email illumos-dev
+* [ ] add runfile/scripts to `usr/src/test`
+* [ ] move test modules under their respective modules
+* [ ] get feedback
+* [ ] ktest(1M) page
+* [ ] ktest(9E/9F) pages
+* [ ] ktest big theory statement in kernel ktest.c
+* [ ] final comb over XXX/TODO
+* [ ] final CR
+
+== Summary
+
+The kernel test facility provides a means to easily run tests against
+kernel modules in situ (that is, in kernel context). This is in
+contrast to the `usr/src/test` framework, which provides a userspace
+framework for running tests in userspace. The kernel tests reside in
+their own modules which are loaded and registered with the central
+kernel test facility. This facility provides the APIs and runtime
+necessary to load, list, and execute these kernel test modules. There
+is also the ability to pass an input stream to a test from userland,
+allowing for more elaborate testing when desired. For example, feeding
+a packet capture stream to a network function test. Passing an input
+stream also allows one to more easily investigate potential issues (in
+production or development) by testing novel payloads on the fly.
+
+== The Test Triple
+
+The ktest namespace is divided into three parts: the module, the
+suite, and the name.
+
+Module:: The module name of the test. This is typically named after
+the module under test, or MUT. The convention is to apennd the `_test`
+suffix to the MUT name. For example, if you are testing the `mac`
+module you would name it the `mac_test` module. Every module consists
+of one or more Suites.
+
+Suite:: The suite name of the test. A suite groups tests of related
+functionality. For example, you may have several tests that verify
+correct behavior of checksum routines, for which you might name the
+suite `checksum`. A suite consists of one or more tests. A suite also
+has optional `init` and `fini` callbacks for one-time setup and
+teardown of shared test state. These are useful if some (or all) of
+the tests require the same context and you want to pay the cost of
+setup and teardown just once.
+
+Test:: The name of the test. This can be any string which you find
+descriptive of the test. If you are testing one specific function, it
+might be convienent to name it `func_name_test`, but no naming
+convention is forced.
+
+What you name the module, suite, and test is really up to you. Ktest
+tries as much as possible to remain a light scaffolding, and avoids
+making framework-like proclimations as much as possible.
+
+== Fully Qualified Triple, Filters, and Quads
+
+A _fully qualified triple_ is one that names a single, unique test.
+For example, `mac:checksum:my_checksum_test` is a fully qualified
+triple because it specifies the module, suite, and test name fully.
+There is no ambiguity about which test a fully qualified triple
+refers to.
+
+A _filter_ is a partially qualified triple, pontetially using basic
+glob patterns to match zero, one, or many tests. For example, the
+`mac:*:*` filter would match all suites and tests under the mac test
+module. A filter is typically used with the `ktest list` or `ktest
+run` command to match a subset of modules, suites, or tests.
+
+A _quad_ is a fully qualified triple paired with an input steam. This
+input stream is specified as a path on the local filesystem.
+
+.quad example
+----
+mac:checksum:my_checksum_test:/export/home/rpz/my_tcp_stream.snoop
+----
+
+A quad is needed when a test requires an input stream. You use a quad
+only for the `ktest run` command. In the above example the `ktest`
+command will try to read the snoop file and send its bytes as input to
+`my_checksum_test`. If you specify a quad the `ktest` command will
+first verify that the paired test is one that expects input, if it is
+not the command will print an error and exit without running any
+tests.
+
+TODO: It should also verify the file exists too.
+
+== The Context Object
+
+All communication between the ktest facility and an individual test
+happens via the "context object" (`ktest_ctx_t`). The context
+object is opaque to the test -- it is not privy to the internal
+structure. Every test must conform to the ktest test prototype.
+
+----
+typedef void (*ktest_fn_t)(struct ktest_ctx *);
+----
+
+All actions on a context object, from the perspective of the test,
+must be done through public ktest APIs which act on the context
+object.
+
+== Setting Test Results
+
+The entire point of a test is to convey a result to the user.
+Typically this is a result of pass or fail: pass means the test ran as
+expected and all conditions were satisfied, fail means a condition was
+violated. However, there are two other less likely, but equally
+important results: error and skip. The following table lists the
+prototypes for the four types of results a test may convey, along with
+a description of when they should be used.
+
+|===
+|Prototype |Description
+
+|`ktest_result_pass(ktest_ctx_t *)`
+|The test calls this function to indicate that the test ran as
+ expected and all conditions were met.
+
+|`ktest_result_fail(ktest_ctx_t *, const char *, ...)`
+|The test calls this function to indicate that one of its conditions
+ has been violated. The test should set the format string and variadic
+ arguments to build a helpful message describing which condition
+ failed and why.
+
+|`ktest_result_error(ktest_ctx_t *, const char *, ...)`
+|The test calls this function to indicate an _unexpected_ error has
+ ocurred. An unexpected error is not the same as a failed condition;
+ rather it is typically some error condition returned from the host
+ system unrelated to or outside the control of the MUT. It may also be
+ a failure during test setup, unrelated to the logical correctness of
+ the MUT. For example, a test may execute, whether directly or
+ indirectly, `NOSLEEP` allocations that could fail. If the purpose of
+ the test is unrelated to those allocations, then those failures
+ should be reported as a test error, not a test failure. That is, if
+ the successful return of a specific call is not a logical condition
+ of a successful test, then a failure return should be reported as a
+ test error result.
+
+Said another way, state which is outside direct control of the test,
+and which has no bearing on the logical correctness of the test,
+should never constitute a _failure_ of the test when an error return
+is encountered. A test implicitly expects certain external conditions
+to hold true, when they don't it often means a test cannot fully
+execute and therefore it is unable to make a determination of
+pass/fail. It's only remaining choice is to report the unexpected
+error.
+
+As with failure, a helpful message should be conveyed to the user.
+
+|`ktest_result_skip(ktest_ctx_t *, const char *, ...)`
+|The test calls this function to indicate it cannot execute. The
+ reason it cannot execute can vary, but typically it will be because
+ the environment will not allow it due to insufficient or missing
+ resources. You can think of this as similar to an error result, with
+ the twist that the test is preemptively determining that it will not
+ be able to fully execute, and thus bows out rather than running head
+ first into an inevitable error result. For example, if the test
+ relies on a specific device to be present, then it would be prudent
+ to return a skip result if that device is not present.
+
+TODO: This makes me realize that we probably want to allow conditional
+execution at the suite and module level in order to avoid long lists
+of skipped tests because a given device/module/etc is not present. For
+example, if for some reason you decided to write a test module for a
+NIC driver, you would probably want the test module to perform a
+top-level check and opt-out if that type of NIC is not
+present/attached.
+
+|===
+
+
+== Pass/Fail results and ASSERT Macros
+
+The pass/fail functions shown above provide a means to convey results
+to the user. However, using them directly for each assertion quickly
+becomes verbose. Each assertion would require an if statement along
+with a corresponding `ktest_result_fail()` call, not to mention the
+format message and arguments. This is quite the burden when you
+consider almost all assertions have the same structure; this is why we
+have generic the generic ASSERT3 family of macros in the kernel.
+
+Ktest has its own variants of the kernel's ASSERT3 macros. Like the
+ASSERT3 family of macros, the ktest macros make it conveinent to
+assert correctness while automatically providing useful reporting when
+a condition is violated. However, the ktest macros are different in
+two major ways.
+
+1. We don't want to panic. The point is to report test failure, not
+preserve system state leading up to an invalid condition.
+
+2. Following from #1, we will often have test state to cleanup upon
+triggering the assertion but before returning from the test function.
+
+For these two reasons, the ktest ASSERTS have a bit of their own
+flavor to get used to.
+
+[cols="44%,1%,55%"]
+|===
+|Prototype |Cleanup? |Description
+
+3+^h|KTest ASSERT
+
+|`KTEST_ASSERT3S(left, op, right, ctx)` +
+`KTEST_ASSERT3U(left, op, right, ctx)` +
+`KTEST_ASSERT3P(left, op, right, ctx)` +
+`KTEST_ASSERT(exp, ctx)` +
+`KTEST_ASSERT0(exp, ctx)` +
+
+|No
+|These are the most direct translation from the ASSERT3 family of
+ macros. They each take one additional argument, at the end, which
+ specifies the context object passed to the test function. This is
+ used by the macro to set the appropriate failure condition inside the
+ context object. These macros offer no way to cleanup test resources.
+ If there are resources to free, then either the "goto" or "block"
+ flavors, described below, must be used.
+
+3+^h|KTest ASSERT Goto
+
+|`KT_ASSERT3SG(left, op, right, ctx, label)` +
+`KT_ASSERT3UG(left, op, right, ctx, label)` +
+`KT_ASSERT3PG(left, op, right, ctx, label)` +
+`KT_ASSERTG(exp, ctx, label)` +
+`KT_ASSERT0G(exp, ctx, label)` +
+
+|Yes
+|These macros are like the KTest ASSERT macros, but after setting the
+ `ctx` they jump to `label`. This allows one to provide a common
+ cleanup routine under the guise of a label, which can then be shared
+ by multiple asserts.
+
+3+^h|KTest ASSERT Block
+
+a|----
+KT_ASSERT3SB(left, op, right, ctx) {
+    ...
+}
+KT_ASSERTB_END
+----
+
+----
+KT_ASSERT3UB(left, op, right, ctx) {
+    ...
+}
+KT_ASSERTB_END
+----
+
+----
+KT_ASSERT3PB(left, op, right, ctx) {
+    ...
+}
+KT_ASSERTB_END
+----
+
+----
+KT_ASSERTB(exp, ctx) {
+    ...
+}
+KT_ASSERTB_END
+----
+
+----
+KT_ASSERT0B(exp, ctx) {
+    ...
+}
+KT_ASSERTB_END
+----
+
+|Yes
+|These macros are like the KTest ASSERT macros, but after setting the
+ `ctx` they run the code inside the trailing block. The trailing block
+ MUST be followed by a `KT_ASSERTB_END`. This is useful for one-off
+ cleanup or whenever using a label is not possible or would result in
+ more complicated code.
+|===
+
+== Error Macros
+
+Along with the pass/fail ASSERT macros, it's also convenient to have
+error macros defined in a similar way. However, unlike the ASSERT
+macros, they are phrased as "error if": set the result to an error, if
+this expression is true. Basically its the opposite of an assert. The
+thinking behind this decision is that `KT_ERRIF_NOT0(foo() != 0, ctx)`
+is more clear than `KT_ERR0(foo(), ctx)`. The later could seem to
+imply that it's an error if `foo()` returns zero, when really we want
+to error when it's not zero.
+
+[cols="44%,1%,55%"]
+|===
+|Prototype| Cleanup?| Description
+
+|`KTEST_ERRIF3S(left, op, right, ctx)` +
+`KTEST_ERRIF3U(left, op, right, ctx)` +
+`KTEST_ERRIF3P(left, op, right, ctx)` +
+`KTEST_ERRIF_NOT0(exp, ctx)` +
+`KTEST_ERRIF_N0(exp, ctx)` +
+
+|No
+|The first three macros set an error result and message in the context
+ object based on the expression arguments provided and then
+ immediately returns. The last two macros perform the same actions,
+ but only when `exp != 0`. No cleanup is possible from any of these
+ macros.
+
+
+|`KT_ERRIF3SG(left, op, right, ctx, label)` +
+`KT_ERRIF3UG(left, op, right, ctx, label)` +
+`KT_ERRIF3PG(left, op, right, ctx, label)` +
+`KT_ERRIF_NOT0G(exp, ctx, label)` +
+`KT_ERRIF_N0G(exp, ctx, label)` +
+
+|Yes
+|The same as the first set of macros, but instead of returning
+ immediately they jump to `label`.
+
+a|----
+KT_ERRIF3SB(left, op, right, ctx) {
+    ...
+}
+KT_ERRIFB_END
+----
+
+----
+KT_ERRIF3UB(left, op, right, ctx) {
+    ...
+}
+KT_ERRIFB_END
+----
+
+----
+KT_ERRIF3PB(left, op, right, ctx) {
+    ...
+}
+KT_ERRIFB_END
+----
+
+----
+KT_ERRIF0B(exp, ctx) {
+    ...
+}
+KT_ERRIFB_END
+----
+|Yes
+|The same as the first set of macros, but instead of returning
+ immediately they execute the provided block.
+|===
+
+* TODO It might be clearer to just keep the logic the same as the
+  ASSERT family but with the understanding that the ERR family of
+  macros is going to produce a call to `ktest_result_error()` as
+  opposed to `ktest_result_fail()`.
+----
+ret = func(...);
+
+KTEST_ERRIF_NOT0(func(), ctx);
+// vs.
+KTEST_ERROR0(func(), ctx);
+
+mp = allocb(...);
+
+KTEST_ERRIF3PG(mp, ==, NULL, ctx, cleanup);
+// vs.
+KTEST_ERROR3PG(mp, !=, NULL, ctx, cleanup);
+
+// We could also just add an `E` prefix to the ASSERT. I think I
+// might actually like this best because it keeps it clear that we
+// are still asserting that a condition should be true, but that if it's
+// not we are going to signal an error, not a failure.
+KTEST_EASSERT0(func(), ctx);
+KTEST_EASSERT3PG(mp, !=, NULL, ctx, cleanup);
+----
+
+== The Test Input Stream
+
+Any test may dictate that it requires an input stream. The input
+stream is just what it sounds like: a stream of incoming bytes. The
+interpretation of those bytes is left to the test, the ktest facility
+is only concerned with reading and delivering the bytes to the test
+as-is. There are a few parts to this, namely the ktest command, the
+ktest kernel facility, and finally the test itself.
+
+The ktest command needs to a) know when a test requires an input
+stream, and b) populate that input stream based on some type of info
+from the user. For the frist part, if a test which requires input is
+specified without an input stream, the ktest command will error early,
+before running any tests, alerting the user to the missing input
+stream. For the second part, the ktest command expects the user to
+specify the fully qualified test triple, along with a file name to
+read the input stream from. If this file does not exist or cannot be
+read from, then the ktest command must return error indicating such
+and no tests should execute.
+
+The ktest kernel facility has the easiest job when it comes to the
+input stream: simply pass it along from command to test. The facility
+should make no attempt to interpret or modify the input stream in
+any way. It only needs to place the stream (as well as its length) in
+the context object, so the test has access to it.
+
+Finally, the test needs access to the input stream. It does this by
+using a ktest API to get a pointer to the stream and its length from
+the context object. This is accomplished with the following API.
+
+----
+void ktest_get_input(const ktest_ctx_t *ctx, uchar_t *input, size_t *len)
+----
+
+== Creating and Registering Tests
+
+The bulk of a test module is concerned with defining tests functions.
+But in order for the ktest facility to know about those functions we
+must create module/suite/test objects and register them with the ktest
+facility. The creation and reigstration of these objects is done via
+the functions described in the table below. A test module should
+perform these calls as part of its `_init()` callback.
+
+|===
+|Prototype| Description
+
+|`int ktest_create_module(char *name, char *mod, char *desc, ktest_module_t **out)`
+|Create a new test module named `name`, which tests the module named
+ `mod`. Place the resulting module object in `*out`.
+
+|`int ktest_create_suite(char *name, char *desc, ktest_suite_t **out)`
+|Create a new suite named `name` and place it in `*out`.
+
+|`int ktest_add_test(ktest_suite_t *ks, char *name, ktest_fn_t fn)`
+|Create a new test named `name` and add it to the suite object `ks`.
+ This test will run the test function `fn` when executed.
+
+|`int ktest_add_testi(ktest_suite_t *ks, char *name, ktest_fn_t fn)`
+|The same as the last function, but creates a test which requires an
+ input stream.
+
+|`int ktest_add_suite(ktest_module_t *km, ktest_suite_t *ks)`
+|Add the test suite `ks` to the test module `km`.
+
+|`void ktest_register_module(ktest_module_t *km)`
+|Register the test module with the ktest facility. This should always
+ be the last call made, after all the tests/suites are created and
+ added to the test module object.
+
+|===
+
+== The Anatomy of a Test
+
+So how does one write a new test? The first step is to create a new
+test module. You start by including `sys/ktest.h` and any other
+headers you need to exercise your MUT.
+
+.`mut_test.c`
+----
+#include <sys/ktest.h>
+#include <sys/mut_impl.h>
+... other includes related to your MUT ...
+----
+
+Next you need to write at least one test. A test must always return
+`void` and takes `ktest_ctx_t *ctx` as its single argument. The `ctx`
+pointer is how the test communicates with ktest, telling it if the
+test passed or failed, and why. The test can pretty much do anything
+any other kernel module would do to setup whatever state is needed.
+Then it calls the function under test and makes whatever assertions it
+needs to to prove the function operated as expected.
+
+Ktest provides variations of the kernel's `ASSERT3*` macros, but with
+a twist. Unlike a typical `ASSERT`, which results in a panic, we need
+to keep running and instead report the failure to ktest (via the `ctx`
+argument). Furthermore, most tests will have resources that must be
+returned to the system before returning. This means these macros must
+also provide the ability to either execute cleanup code or jump to a
+label. That said, underneath all that are the two important APIs that
+communicate the result to ktest.
+
+* `ktest_result_pass(ktest_ctx_t *ctx)`: This API is used to tell
+  ktest that the test passed.
+
+* `ktest_result_fail(ktest_ctx_t *ctx, const char *, ...)`: This API
+  is used to tell ktest that the test failed along with a reason why
+  it failed. The convenience of the `KT_ASSERT` macros is that they
+  automatically provide you with a message, but you are always free to
+  call this API manually and provide your own detailed message.
+
+There are two other results that a test may report: error, and skip.
+
+* `ktest_result_error(ktest_ctx_t *ctx, const char *, ...)`: The test
+  uses this API to let ktest know it encountered an unexpected error
+  while trying to run. This will typically be some type of error while
+  trying to setup state, such as an `ENOMEM` or `EINVAL` result. In
+  this case the test didn't actually fail, it just can't fully execute
+  for some unexpected reason.
+
+* `ktest_result_skip(ktest_ctx_t *ctx, const char *, ...)`: The test
+  uses this API to let ktest know that it cannot run for some
+  _expected_ reason. That is, there may be conditions required for the
+  test to run that can't be met in the current context its running in.
+  Perhaps the MUT isn't loaded or some other required system state is
+  not present. In any event, we don't have the necessary environment
+  to accurately determine a pass/fail.
+
+
+.`mut_test.c`
+----
+void
+mut_func_test(ktest_ctx_t *ctx)
+{
+	... various state setup ...
+	ret = mut_func(foo, bar, &out);
+	KT_ASSERTG_0(ret, cleanup);
+	KT_ASSERTG_3U(out, ==, 42, cleanup);
+
+	// If we are here the test passed, let ktest know the good news.
+	ktest_result_pass(ctx);
+
+cleanup:
+	... various state cleanup ...
+}
+----
+
+Once you have defined all your tests you need to register them with
+ktest. Now remember, the `mut_test` itself is a kernel module, so it
+needs its own `_init()` and `_fini()` callbacks. It turns out these
+are also great places to register and deregister with ktest.
+
+.mut_test.c
+----
+int
+_init()
+{
+	int ret;
+	ktest_module_t *km = NULL;
+	ktest_suite_t *ks = NULL;
+
+	ret = ktest_create_module("mut", "mut",
+	    "test routines in the mut module", &km);
+
+	if (ret != 0)
+	    	return (ret);
+
+	ret = ktest_create_suite("func_tests", "test various functions in mut",
+	    &ks);
+
+	if (ret != 0)
+	   	return (ret);
+
+	ret = ktest_add_test(ks, "mut_test", mut_test);
+
+	if (ret != 0)
+	   	return (ret);
+
+	ktest_add_suite(km, ks);
+	ktest_register_module(km);
+
+	if ((ret = mod_install(&mut_test_modlinkage)) != 0)
+	   	 return (ret);
+
+	return (0);
+}
+----
+
+And that's all there is to registering a ktest test module.
+
+== Where do Test Modules Live?
+
+The ktest facility does not dictate where your test modules live,
+either in their source or binary form, nor how those modules are
+loaded. The facility's goal is to provide a means for registering,
+listing, and executing tests, but not necessairly dictate all the
+terms and conditions of how that is done. That said, there are general
+conventions that we should strive to follow, detailed below.
+
+Test modules should be dedicated, misc-type loadable kernel modules,
+separate from the module under test. They should use `modlmisc`
+linkage and perform test registration/deregistration in their
+`_init(9E)` and `_fini(9E)` callbacks. A given test module will
+typically live adjacent to its MUT under the `usr/src/uts` tree. The
+source file and binary should generally use the name `<MUT>_test`. You
+should deviate from this rule when the module covers many subsystems
+and breaking it up would add clarity. For example, the mblk routines
+in the "STREAMS subsystem" are part of `genunix`. But `genunix` covers
+a lot of ground, and `genunix_test.c` would be a pretty big source
+file. In this scenario it makes more sense to create a `stream_test.c`
+next to the `stream.c` file and create a `stream_test` module that
+execises the various stream APIs in genunix.
+
+Test modules, like system libraries, should come welded to the system.
+That is, whenever possible, the source code for the test module should
+live in illumos-gate. The main exceptions would be for a test
+delivered as part of an out-of-gate driver or for downstream
+distributions testing their own kernel functionality.
+
+Whether and how test module binaries are delivered is a choice made
+independently by each downstream distribution. That said, we must make
+a default decision about how to structure the IPS manifests in gate.
+First, it seems to make sense to at least give the ktest facility its
+own package, which includes only the means to register, list, and
+execute tests, but does not deliver any tests itself. Things get more
+interesting when determining how test modules should be delivered. The
+following is a table of potential options and their tradeoffs.
+
+|===
+|Delivery| Tradeoffs
+
+|1. All in-gate tests delivered in ktest package. Deliver all in-gate
+ test modules as part of the ktest package.
+a|* One package gives you everything.
+* No test modules delivered unless you absoltely want them.
+* Delivers test modules for modules that may not be attached and that
+have no relevance to your system .
+
+|2. Each test module is delivered with whatever package delivers the MUT.
+ Each package which delivers a test module has a dependency on ktest
+ facility package.
+a|* Only the necessary test modules are installed.
+* Logically makes the most sense.
+* Given that many MUTs are part of the main kernel, this effectively
+  means ktest is always delivered.
+
+|3. Same as previous, but don't require ktest dependency.
+a|* Same benefits as above, but test execution can only happen if the
+user decides to also install ktest. Otherwise the test modules lay
+doormant on the filesystem (not loaded).
+
+|4. All test modules delivered by uber test-module package. This is
+ really no different than first option, but now the ktest facility and
+ the tests have separate packages. In this case the uber test-module
+ package should probably have a dependency on the ktest package.
+a|* One package gives you all tests.
+* No test modules unless you absolutely want them.
+* Delivers test modules that may not be attach and that have no
+  relevance to your system.
+
+|===
+
+I think we should go with option (3). We should deliver test-modules
+with their MUTs, but only load/run them when the ktest facility is
+installed (and even then they would not be loaded until the user
+specifically requests that one or more test-modules be loaded).
+
+As these test-modules are misc-type modules, they should be delivered
+in the misc module directories. However, in order not to pollute the
+`misc/` directory, it makes sense to place them under a `ktest/`
+subdir.
+
+.ktest loadable modules home
+----
+/kernel/misc/ktest/amd64
+/usr/kernel/misc/ktest/amd64
+----
+
+== ktest(1M)
+
+The `ktest(1M)` command controls all interactions between the user and
+ktest facility, as well as all interactions between the test modules
+and ktest facility. That is, unless done through some other means like
+`modload`, all test module loading, unloading, listing, and running
+should only occur as a direct result of the user requesting action
+from the `ktest` command.
+
+.ktest usage
+----
+pfexec ktest [global_opts] cmd [cmd_opts] [operands]
+----
+
+=== Global Options
+
+|===
+|Option| Description
+
+a|`-p`
+a|Write output in "parsable" format. Generally this means all output
+ fields separated by the `:` character.
+
+|===
+
+=== Loading/Unloading Test Modules
+
+* TODO: Currently only plain `ktest mod-list/mod-load` works, and it
+  lists/loads all test modules.
+
+.ktest mod-list/mod-load usage
+----
+ktest [-p] mod-list
+ktest [-p] mod-load [-a] [-f path] name...
+----
+
+The preferred method of loading test modules is via the `ktest mod-load`
+command. A test module is simply a loadable misc kernel module that
+performs ktest registration as part of its `_init()` entry, thus
+`modload(1M)` is a fine way to load a test module. But the preferred
+method is `ktest mod-load`.
+
+By default, `mod-load` looks for test modules under the following
+directories.
+
+.test module search dirs
+----
+/kernel/misc/ktest/amd64
+/usr/kernel/misc/ktest/amd64
+----
+
+* TODO: Should these paths be stored in a config file?
+* TODO: Should there be an option to set/add to this list?
+* TODO: Should there be an environment variable to control the path list?
+
+You can use the `mod-list` command to determine which test modules
+live in these directories as well as their current status: `loaded` or
+`unloaded`.
+
+.list all loadable test modules
+----
+rpz@thunderhead:~$ pfexec ktest mod-list
+mac_test: unloaded
+stream_test: unloaded
+----
+
+To load one or more test modules, pass their base names to the
+`mod-load` command. This command searches the test module directories
+for files matching these names. Each match will be loaded, causing its
+`_init()` entry to run, which should then perform ktest registration.
+
+----
+$ pfexec ktest mod-load mac_test stream_test
+----
+
+* TODO: Should I have vebose option to list all loaded triples?
+
+If you want to load a test module from an arbitrary path in the
+filesystem then use the `-f` option.
+
+----
+$ pfexec ktest load -f ~/src/illumos-gate/proto/.../new_test_module
+----
+
+Pass the `-a` option to load all discoverable test modules. If this
+option is passed all explicitly specified names are ignored. However,
+you can combine this option with one or more `-f` options to load all
+discoverable test modules as well as specific test modules outside the
+search path.
+
+----
+$ pfexec ktest mod-load -a
+loaded mac_test
+loaded stream_test
+----
+
+=== Listing Tests
+
+You use the `list` command to list registered tests.
+
+.ktest list usage
+----
+ktest [-p] list [filter]...
+----
+
+.list all registered tests
+----
+$ pfexec ktest list
+Module: mac
+Suite: checksum
+Tests: mac_sw_cksum_ipv4_test, mac_sw_cksum_input_ipv4_test
+
+Module: mac
+Suite: dummy
+Tests: mac_dummy_pass_test, mac_dummy_fail_test, mac_dummy_err_test, mac_dummy_skip_test, mac_dummy_input_test
+
+Module: stream
+Suite: mblk
+Tests: mblkl_test, msgsize_test
+----
+
+=== Running Tests
+
+You use the `run` command to execute registered tests and get their
+results.
+
+.ktest run usage
+----
+ktest [-p] run  [-f runfile|'-'] filter|quad...
+----
+
+The simplest thing you can do is run all reigstered tests. Unlike the
+`list` command, the `run` command does not assume you want to run all
+tests if given no input. Rather, it always requires an explicit input
+to avoid the accidental running of all tests by the user. But running
+all tests is still easy enough, just pass the `*` filter.
+
+.run all reigstered tests
+----
+$ pfexec ktest run *
+PASS   mac:checksum:mac_sw_cksum_ipv4_test
+PASS   mac:dummy:mac_dummy_pass_test
+FAIL   mac:dummy:mac_dummy_fail_test
+        mt_dummy(5) == 0 (0x1 == 0x0) (../../common/io/mac/mac_test.c:30)
+ERROR  mac:dummy:mac_dummy_err_test
+        mt_dummy(3) != 0 (0x1 != 0x0) (../../common/io/mac/mac_test.c:37)
+SKIP   mac:dummy:mac_dummy_skip_test
+        The king stay the king.
+PASS   stream:mblk:mblkl_test
+PASS   stream:mblk:msgsize_test
+----
+
+This is equivalent to specifying the more explicit `\*:*:*` filter.
+
+To run a test which requires an input stream you must use the fully
+qualified triple along with a path to the input file -- also know as a
+_quad_.
+
+.pass input stream to test
+----
+$ pfexec ktest run mac:checksum:mac_sw_cksum_input_ipv4_test:/export/home/rpz/one.snoop
+PASS   mac:checksum:mac_sw_cksum_input_ipv4_test
+----

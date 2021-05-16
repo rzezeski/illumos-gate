@@ -29,6 +29,7 @@
 # Copyright 2016 Hans Rosenfeld <rosenfeld@grumpf.hope-2000.org>
 # Copyright 2019 Peter Tribble.
 # Copyright 2015, Joyent, Inc. All rights reserved.
+# Copyright 2021 Oxide Computer Company
 #
 
 include $(SRC)/uts/Makefile.uts
@@ -346,6 +347,8 @@ CHKHDRS=			\
 	kstr.h			\
 	ksyms.h			\
 	ksynch.h		\
+	ktest.h			\
+	ktest_impl.h		\
 	ldterm.h		\
 	lgrp.h			\
 	lgrp_user.h		\

@@ -26,7 +26,7 @@
 # Copyright 2019 Joyent, Inc.
 # Copyright 2018 Nexenta Systems, Inc.
 # Copyright (c) 2017 by Delphix. All rights reserved.
-# Copyright 2020 Oxide Computer Company
+# Copyright 2021 Oxide Computer Company
 #
 
 #
@@ -918,6 +918,10 @@ $(OBJS_DIR)/%.o:		$(UTSBASE)/common/io/ksensor/%.c
 	$(CTFCONVERT_O)
 
 $(OBJS_DIR)/%.o:		$(UTSBASE)/common/io/ksocket/%.c
+	$(COMPILE.c) -o $@ $<
+	$(CTFCONVERT_O)
+
+$(OBJS_DIR)/%.o:		$(UTSBASE)/common/io/ktest/%.c
 	$(COMPILE.c) -o $@ $<
 	$(CTFCONVERT_O)
 

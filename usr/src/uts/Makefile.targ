@@ -24,6 +24,7 @@
 # Copyright 2016 Hans Rosenfeld <rosenfeld@grumpf.hope-2000.org>
 # Copyright (c) 2017 by Delphix. All rights reserved.
 # Copyright 2019 Joyent, Inc.
+# Copyright 2021 Oxide Computer Company
 #
 #	This Makefiles contains the common targets and definitions for
 #	all kernels. It is to be included in the Makefiles for specific
@@ -223,6 +224,10 @@ $(ROOT_FIRMWARE_DIR)/$(MODULE)/%:= FILEMODE = $(CFILEMODE)
 
 $(ROOT_FIRMWARE_DIR)/$(MODULE)/%: $(ROOT_FIRMWARE_DIR)/$(MODULE) $(FWDIR)/%
 	$(INS.file)
+
+$(ROOT_KTEST_DIR)/%: $(OBJS_DIR)/% $(ROOT_KTEST_DIR) FRC
+	$(INS.file)
+
 
 include $(SRC)/Makefile.psm.targ
 

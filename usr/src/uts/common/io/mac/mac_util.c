@@ -38,12 +38,14 @@
 #include <sys/vlan.h>
 #include <sys/pattr.h>
 #include <sys/pci_tools.h>
+#include <sys/ktest.h>
 #include <inet/ip.h>
 #include <inet/ip_impl.h>
 #include <inet/ip6.h>
 #include <sys/vtrace.h>
 #include <sys/dlpi.h>
 #include <sys/sunndi.h>
+#include <netinet/in.h>
 #include <inet/ipsec_impl.h>
 #include <inet/sadb.h>
 #include <inet/ipsecesp.h>
