@@ -45,13 +45,15 @@
 #define	CH_ALERT(sc, ...)	cxgb_printf(sc->dip, CE_NOTE, ##__VA_ARGS__)
 #define	CH_INFO(sc, ...)	cxgb_printf(sc->dip, CE_NOTE, ##__VA_ARGS__)
 
-#define CH_MSG(sc, level, category, fmt, ...)  
+#define CH_MSG(sc, level, category, fmt, ...)
+
 #ifdef DEBUG
-#define CH_DBG(sc, category, fmt, ...) cxgb_printf(sc->dip, CE_NOTE, ##__VA_ARGS__)
+#define CH_DBG(sc, ...) cxgb_printf(sc->dip, CE_NOTE, ##__VA_ARGS__)
 #else
-#define CH_DBG(sc, category, fmt, ...)
+#define CH_DBG(sc, ...)
 #endif
-#define CH_DUMP_MBOX(adap, mbox, data_reg, size) 
+
+#define CH_DUMP_MBOX(adap, mbox, data_reg, size)
 
 #define	MII_BMCR	0x00
 #define	MII_BMSR	0x01
@@ -190,17 +192,10 @@ typedef boolean_t	bool;
 #define	true		B_TRUE
 #define	false		B_FALSE
 
-#if defined(__sparc)
-#define	__BIG_ENDIAN_BITFIELD
-#define	PAGE_SIZE 8192
-#define	PAGE_SHIFT 13
-#define	CACHE_LINE 64
-#else
 #define	__LITTLE_ENDIAN_BITFIELD
 #define	PAGE_SIZE 4096
 #define	PAGE_SHIFT 12
-#define	CACHE_LINE 32
-#endif
+#define	CACHE_LINE 64
 
 #define	SUPPORTED_10baseT_Half		(1 << 0)
 #define	SUPPORTED_10baseT_Full		(1 << 1)

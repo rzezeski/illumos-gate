@@ -122,7 +122,7 @@ struct port_info {
 	uint8_t  port_id;
 	uint8_t  tx_chan;
 	uint8_t  rx_chan;
-	uint8_t  rx_cchan;
+	uint8_t  rx_cchan;	/* Rx TP c-channel */
 	uint8_t instance; /* Associated adapter instance */
 	uint8_t child_inst; /* Associated child instance */
 	uint8_t	tmr_idx;
@@ -369,6 +369,11 @@ struct sge_rxq {
 
 	/* stats for not-that-common events */
 
+	/*
+	 * RPZ: we don't actually use this, but we should.
+	 *
+	 * RPZ: we have an allocb_fail stat on the freelist
+	 */
 	uint32_t nomem;		/* mblk allocation during rx failed */
 };
 
@@ -751,6 +756,22 @@ t4_write_reg64(struct adapter *sc, uint32_t reg, uint64_t val)
 	ddi_put64(sc->regh, (uint64_t *)(sc->regp + reg), val);
 }
 
+/*
+ * RPZ: should we actually use stats_lb_mode? It seems like it
+ * could add quite a bit of overhead. Is "LB mode" something
+ * related to offload, or is it always enabled on T7?
+ *
+ * RPZ: linux uses pi->lport, does this need to change?
+ */
+#define T4_GET_STAT(pi, name)						\
+	t4_read_reg64((pi)->adapter,					\
+	    t4_port_reg((pi)->adapter, (pi)->port_id,			\
+		A_MPS_PORT_STAT_##name##_L))
+
+/* RPZ: should this be using different reg base depending on chip? */
+#define	T4_GET_STAT_COM(pi, name)				\
+	t4_read_reg64((pi)->adapter, A_MPS_STAT_##name##_L)
+
 static inline struct port_info *
 adap2pinfo(struct adapter *sc, int idx)
 {
@@ -800,11 +821,22 @@ is_100G_port(const struct port_info *pi)
 }
 
 static inline bool
+is_200G_port(const struct port_info *pi)
+{
+	return ((pi->link_cfg.pcaps & FW_PORT_CAP32_SPEED_200G) != 0);
+}
+
+static inline bool
+is_400G_port(const struct port_info *pi)
+{
+	return ((pi->link_cfg.pcaps & FW_PORT_CAP32_SPEED_400G) != 0);
+}
+
+static inline bool
 is_10XG_port(const struct port_info *pi)
 {
-	return (is_10G_port(pi) || is_40G_port(pi) ||
-		is_25G_port(pi) || is_50G_port(pi) ||
-		is_100G_port(pi));
+	int speed = G_FW_PORT_CAP32_SPEED(pi->link_cfg.pcaps);
+	return (speed >= FW_PORT_CAP32_SPEED_10G);
 }
 
 #ifdef TCP_OFFLOAD_ENABLE
@@ -877,6 +909,15 @@ static inline unsigned int t4_use_ldst(struct adapter *adap)
 
 static inline void t4_db_full(struct adapter *adap) {}
 static inline void t4_db_dropped(struct adapter *adap) {}
+
+/*
+ * RPZ: AFAICT a "platform device" is a Linux-specific thing. For now
+ * do this, but consider removing code related to this check.
+ */
+static inline bool t4_os_is_platform_device(struct adapter *adap)
+{
+	return(false);
+}
 
 /* t4_nexus.c */
 int t4_os_find_pci_capability(struct adapter *sc, int cap);

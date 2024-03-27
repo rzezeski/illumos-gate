@@ -43,6 +43,14 @@
 #include "common/t4_regs_values.h"
 
 /* TODO: Tune. */
+
+/*
+ * RPZ: We are setting Rx buf size to 8K here, but I don't think we
+ * are setting the bottom 4 bits of the "Free List Pointer". I believe
+ * that means the FL will consider the buffer size to be whatever is
+ * in the SGE_FL_BUFFER_SIZE0 reg. And I believe that's 4K. We should
+ * look at how FreeBSD builds its FL.
+ */
 int rx_buf_size = 8192;
 int tx_copy_threshold = 256;
 uint16_t rx_copy_threshold = 256;
@@ -148,7 +156,7 @@ static inline void write_ulp_cpl_sgl(struct port_info *pi, struct sge_txq *txq,
     struct txpkts *txpkts, struct txinfo *txinfo);
 static inline void copy_to_txd(struct sge_eq *eq, caddr_t from, caddr_t *to,
     int len);
-static inline void ring_tx_db(struct adapter *sc, struct sge_eq *eq);
+static void ring_tx_db(struct adapter *sc, struct sge_eq *eq);
 static int reclaim_tx_descs(struct sge_txq *txq, int howmany);
 static void write_txqflush_wr(struct sge_txq *txq);
 static int t4_eth_rx(struct sge_iq *iq, const struct rss_header *rss,
@@ -259,6 +267,7 @@ t4_sge_init(struct adapter *sc)
 	dma_attr->dma_attr_version = DMA_ATTR_V0;
 	dma_attr->dma_attr_addr_lo = 0;
 	dma_attr->dma_attr_addr_hi = UINT64_MAX;
+	/* RPZ: I don't know if this is right. See other drivers. */
 	dma_attr->dma_attr_count_max = UINT64_MAX;
 	/*
 	 * Low 4 bits of an rx buffer address have a special meaning to the SGE
@@ -1281,6 +1290,11 @@ init_eq(struct adapter *sc, struct sge_eq *eq, uint16_t eqtype, uint16_t qsize,
 	ASSERT(tx_chan < NCHAN);
 	ASSERT(eqtype <= EQ_TYPEMASK);
 
+	/*
+	 * RPZ: Linux/FreeBSD call t4_init_sge_params() to set
+	 * iq/eq_qpp, we don't. Does it matter? Might want to compare
+	 * our iq/eq allocation code.
+	 */
 	if (is_t5(sc->params.chip)) {
 		r = t4_read_reg(sc, A_SGE_EGRESS_QUEUES_PER_PAGE_PF);
 		r >>= S_QUEUESPERPAGEPF0 +
@@ -1292,6 +1306,61 @@ init_eq(struct adapter *sc, struct sge_eq *eq, uint16_t eqtype, uint16_t qsize,
 	eq->tx_chan = tx_chan;
 	eq->iqid = iqid;
 	eq->qsize = qsize;
+}
+
+/*
+ * Set the queue's congestion manager mode and channel map bits. The
+ * cong value is either -1 to indicate no congestion mode (for event
+ * queues), or >= 0 to indicate the channel map.
+ */
+static int
+t4_sge_set_conm_context(struct adapter *sc, struct sge_iq *iq, int cong)
+{
+	uint32_t val = 0;
+	unsigned int chip_ver = CHELSIO_CHIP_VERSION(sc->params.chip);
+	uint16_t cng_ch_bits_log = sc->params.arch.cng_ch_bits_log;
+
+	if (cong < 0) {
+		return (0);
+	}
+
+	/* Congestion manager applies to T5 and beyond only. */
+	if (chip_ver < CHELSIO_T5) {
+		return (ENOTSUP);
+	}
+
+	uint32_t param = V_FW_PARAMS_MNEM(FW_PARAMS_MNEM_DMAQ) |
+	    V_FW_PARAMS_PARAM_X(FW_PARAMS_PARAM_DMAQ_CONM_CTXT) |
+	    V_FW_PARAMS_PARAM_YZ(iq->cntxt_id);
+
+	uint32_t mode = cong == 0 ? X_CONMCTXT_CNGTPMODE_QUEUE :
+	    X_CONMCTXT_CNGTPMODE_CHANNEL;
+
+
+	if (chip_ver >= CHELSIO_T7) {
+		/*
+		 * The T7+ firmware calculates the congestion channel
+		 * map internally based on the configured LB_MODE.
+		 */
+		val = V_T7_DMAQ_CONM_CTXT_CNGTPMODE(mode) |
+		    V_T7_DMAQ_CONM_CTXT_CH_VEC(cong);
+	} else {
+		val = V_CONMCTXT_CNGTPMODE(mode);
+
+		if (mode == X_CONMCTXT_CNGTPMODE_CHANNEL ||
+		    mode == X_CONMCTXT_CNGTPMODE_BOTH) {
+			uint32_t ch_map = 0;
+
+			for (int i = 0; i < 4; i++) {
+				if (cong & (1 << i))
+					ch_map |= 1 << (i << cng_ch_bits_log);
+			}
+
+			val |= V_CONMCTXT_CNGCHMAP(ch_map);
+		}
+	}
+
+	return (-t4_set_params(sc, sc->mbox, sc->pf, 0, 1, &param, &val));
 }
 
 /*
@@ -1310,11 +1379,12 @@ static int
 alloc_iq_fl(struct port_info *pi, struct sge_iq *iq, struct sge_fl *fl,
     int intr_idx, int cong)
 {
-	int rc, i, cntxt_id;
+	int rc, cntxt_id;
 	size_t len;
 	struct fw_iq_cmd c;
 	struct adapter *sc = iq->adapter;
 	uint32_t v = 0;
+	unsigned int chip_ver = CHELSIO_CHIP_VERSION(sc->params.chip);
 
 	len = iq->qsize * iq->esize;
 	rc = alloc_desc_ring(sc, len, DDI_DMA_READ, &iq->dhdl, &iq->ahdl,
@@ -1356,8 +1426,6 @@ alloc_iq_fl(struct port_info *pi, struct sge_iq *iq, struct sge_fl *fl,
 					FW_IQ_IQTYPE_NIC : FW_IQ_IQTYPE_OFLD));
 
 	if (fl != NULL) {
-		unsigned int chip_ver = CHELSIO_CHIP_VERSION(sc->params.chip);
-
 		mutex_init(&fl->lock, NULL, MUTEX_DRIVER,
 		    DDI_INTR_PRI(sc->intr_pri));
 		fl->flags |= FL_MTX;
@@ -1385,7 +1453,7 @@ alloc_iq_fl(struct port_info *pi, struct sge_iq *iq, struct sge_fl *fl,
 			    F_FW_IQ_CMD_FL0CONGEN);
 		}
 
-		/* In T6, for egress queue type FL there is internal overhead
+		/* In T6, for ingress queue type FL there is internal overhead
 		 * of 16B for header going into FLM module.  Hence the maximum
 		 * allowed burst size is 448 bytes.  For T4/T5, the hardware
 		 * doesn't coalesce fetch requests if more than 64 bytes of
@@ -1397,7 +1465,7 @@ alloc_iq_fl(struct port_info *pi, struct sge_iq *iq, struct sge_fl *fl,
 		c.fl0dcaen_to_fl0cidxfthresh =
 		    cpu_to_be16(V_FW_IQ_CMD_FL0FBMIN(chip_ver <= CHELSIO_T5
 						     ? X_FETCHBURSTMIN_128B
-						     : X_FETCHBURSTMIN_64B) |
+						     : X_FETCHBURSTMIN_64B_T6) |
 		    V_FW_IQ_CMD_FL0FBMAX(chip_ver <= CHELSIO_T5
 					 ? X_FETCHBURSTMAX_512B
 					 : X_FETCHBURSTMAX_256B));
@@ -1450,23 +1518,8 @@ alloc_iq_fl(struct port_info *pi, struct sge_iq *iq, struct sge_fl *fl,
 		iq->flags |= IQ_HAS_FL;
 	}
 
-	if (is_t5(sc->params.chip) && cong >= 0) {
-		uint32_t param, val;
-
-		param = V_FW_PARAMS_MNEM(FW_PARAMS_MNEM_DMAQ) |
-			V_FW_PARAMS_PARAM_X(FW_PARAMS_PARAM_DMAQ_CONM_CTXT) |
-			V_FW_PARAMS_PARAM_YZ(iq->cntxt_id);
-		if (cong == 0)
-			val = 1 << 19;
-		else {
-			val = 2 << 19;
-			for (i = 0; i < 4; i++) {
-				if (cong & (1 << i))
-					val |= 1 << (i << 2);
-			}
-		}
-
-		rc = -t4_set_params(sc, sc->mbox, sc->pf, 0, 1, &param, &val);
+	if (chip_ver >= CHELSIO_T5 && cong >= 0) {
+		rc = t4_sge_set_conm_context(sc, iq, cong);
 		if (rc != 0) {
 			/* report error but carry on */
 			cxgb_printf(sc->dip, CE_WARN,
@@ -2960,7 +3013,7 @@ write_txpkt_wr(struct port_info *pi, struct sge_txq *txq, mblk_t *m,
 
 	/* CPL header */
 	cpl->ctrl0 = cpu_to_be32(V_TXPKT_OPCODE(CPL_TX_PKT) |
-	    V_TXPKT_INTF(pi->tx_chan) | V_TXPKT_PF(pi->adapter->pf));
+	    V_TXPKT_INTF(pi->lport) | V_TXPKT_PF(pi->adapter->pf));
 	cpl->pack = 0;
 	cpl->len = cpu_to_be16(txinfo->len);
 	cpl->ctrl1 = cpu_to_be64(ctrl1);
@@ -3065,7 +3118,7 @@ write_ulp_cpl_sgl(struct port_info *pi, struct sge_txq *txq,
 	/* CPL_TX_PKT */
 	cpl = (void *)flitp;
 	cpl->ctrl0 = cpu_to_be32(V_TXPKT_OPCODE(CPL_TX_PKT) |
-	    V_TXPKT_INTF(pi->tx_chan) | V_TXPKT_PF(pi->adapter->pf));
+	    V_TXPKT_INTF(pi->lport) | V_TXPKT_PF(pi->adapter->pf));
 	cpl->pack = 0;
 	cpl->len = cpu_to_be16(txinfo->len);
 	cpl->ctrl1 = cpu_to_be64(ctrl);
@@ -3113,11 +3166,12 @@ copy_to_txd(struct sge_eq *eq, caddr_t from, caddr_t *to, int len)
 	}
 }
 
-static inline void
+static void
 ring_tx_db(struct adapter *sc, struct sge_eq *eq)
 {
 	int val, db_mode;
 	u_int db = eq->doorbells;
+	unsigned int chip_ver = CHELSIO_CHIP_VERSION(sc->params.chip);
 
 	if (eq->pending > 1)
 		db &= ~DOORBELL_WCWR;
@@ -3142,7 +3196,7 @@ ring_tx_db(struct adapter *sc, struct sge_eq *eq)
 
 	membar_producer();
 
-	if (is_t4(sc->params.chip))
+	if (chip_ver == CHELSIO_T4)
 		val = V_PIDX(eq->pending);
 	else
 		val = V_PIDX_T5(eq->pending);
@@ -3617,12 +3671,7 @@ update_port_info_kstats(kstat_t *ksp, int rw)
 	else
 		KS_C_SET(transceiver, "type %d", pi->mod_type);
 
-#define	GET_STAT(name) t4_read_reg64(pi->adapter, \
-	    PORT_REG(pi->port_id, A_MPS_PORT_STAT_##name##_L))
-#define	GET_STAT_COM(name) t4_read_reg64(pi->adapter, \
-	    A_MPS_STAT_##name##_L)
-
-	bgmap = G_NUMPORTS(t4_read_reg(pi->adapter, A_MPS_CMN_CTL));
+	bgmap = t4_get_mps_bg_map(pi->adapter, pi->port_id);
 	if (bgmap == 0)
 		bgmap = (pi->port_id == 0) ? 0xf : 0;
 	else if (bgmap == 1)
@@ -3631,27 +3680,27 @@ update_port_info_kstats(kstat_t *ksp, int rw)
 		bgmap = 1;
 
 	KS_U_SET(rx_ovflow0, (bgmap & 1) ?
-	    GET_STAT_COM(RX_BG_0_MAC_DROP_FRAME) : 0);
+	    T4_GET_STAT_COM(pi, RX_BG_0_MAC_DROP_FRAME) : 0);
 	KS_U_SET(rx_ovflow1, (bgmap & 2) ?
-	    GET_STAT_COM(RX_BG_1_MAC_DROP_FRAME) : 0);
+	    T4_GET_STAT_COM(pi, RX_BG_1_MAC_DROP_FRAME) : 0);
 	KS_U_SET(rx_ovflow2, (bgmap & 4) ?
-	    GET_STAT_COM(RX_BG_2_MAC_DROP_FRAME) : 0);
+	    T4_GET_STAT_COM(pi, RX_BG_2_MAC_DROP_FRAME) : 0);
 	KS_U_SET(rx_ovflow3, (bgmap & 8) ?
-	    GET_STAT_COM(RX_BG_3_MAC_DROP_FRAME) : 0);
-	KS_U_SET(rx_trunc0,  (bgmap & 1) ?
-	    GET_STAT_COM(RX_BG_0_MAC_TRUNC_FRAME) : 0);
-	KS_U_SET(rx_trunc1,  (bgmap & 2) ?
-	    GET_STAT_COM(RX_BG_1_MAC_TRUNC_FRAME) : 0);
-	KS_U_SET(rx_trunc2,  (bgmap & 4) ?
-	    GET_STAT_COM(RX_BG_2_MAC_TRUNC_FRAME) : 0);
-	KS_U_SET(rx_trunc3,  (bgmap & 8) ?
-	    GET_STAT_COM(RX_BG_3_MAC_TRUNC_FRAME) : 0);
+	    T4_GET_STAT_COM(pi, RX_BG_3_MAC_DROP_FRAME) : 0);
 
-	KS_U_SET(tx_pause, GET_STAT(TX_PORT_PAUSE));
-	KS_U_SET(rx_pause, GET_STAT(RX_PORT_PAUSE));
+	KS_U_SET(rx_trunc0, (bgmap & 1) ?
+	    T4_GET_STAT_COM(pi, RX_BG_0_MAC_TRUNC_FRAME) : 0);
+	KS_U_SET(rx_trunc1, (bgmap & 2) ?
+	    T4_GET_STAT_COM(pi, RX_BG_1_MAC_TRUNC_FRAME) : 0);
+	KS_U_SET(rx_trunc2, (bgmap & 4) ?
+	    T4_GET_STAT_COM(pi, RX_BG_2_MAC_TRUNC_FRAME) : 0);
+	KS_U_SET(rx_trunc3, (bgmap & 8) ?
+	    T4_GET_STAT_COM(pi, RX_BG_3_MAC_TRUNC_FRAME) : 0);
+
+	KS_U_SET(tx_pause, T4_GET_STAT(pi, TX_PORT_PAUSE));
+	KS_U_SET(rx_pause, T4_GET_STAT(pi, RX_PORT_PAUSE));
 
 	return (0);
-
 }
 
 /*
