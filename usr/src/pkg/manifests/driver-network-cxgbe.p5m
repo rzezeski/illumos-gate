@@ -40,9 +40,9 @@ file path=kernel/firmware/cxgbe/t5fw_cfg.txt
 file path=kernel/firmware/cxgbe/t6fw-1.27.5.0.bin
 link path=kernel/firmware/cxgbe/t6fw.bin target=t6fw-1.27.5.0.bin
 file path=kernel/firmware/cxgbe/t6fw_cfg.txt
-file path=kernel/firmware/cxgbe/t7fw-1.27.0.57.bin
-link path=kernel/firmware/cxgbe/t7fw.bin target=t7fw-1.27.0.57.bin
-file path=kernel/firmware/cxgbe/t7fw_cfg_fpga.txt
+file path=kernel/firmware/cxgbe/t7fw-1.27.0.72.bin
+link path=kernel/firmware/cxgbe/t7fw.bin target=t7fw-1.27.0.72.bin
+file path=kernel/firmware/cxgbe/t7fw_cfg.txt
 dir  path=usr group=sys
 dir  path=usr/sbin
 file path=usr/sbin/cxgbetool mode=0555
