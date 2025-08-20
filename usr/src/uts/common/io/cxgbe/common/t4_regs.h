@@ -298,6 +298,12 @@
 #define MPS_T5_CLS_SRAM_H(idx) (A_MPS_T5_CLS_SRAM_H + (idx) * 8)
 #define NUM_MPS_T5_CLS_SRAM_H_INSTANCES 512
 
+#define MPS_T7B_CLS_SRAM_L(idx) (A_MPS_T7B_CLS_SRAM_L + (idx) * 8)
+#define NUM_MPS_T7B_CLS_SRAM_L_INSTANCES 1536
+
+#define MPS_T7B_CLS_SRAM_H(idx) (A_MPS_T7B_CLS_SRAM_H + (idx) * 8)
+#define NUM_MPS_T7B_CLS_SRAM_H_INSTANCES 1536
+
 #define LE_T5_DB_MASK_IPV4(idx) (A_LE_T5_DB_MASK_IPV4 + (idx) * 4)
 #define NUM_LE_T5_DB_MASK_IPV4_INSTANCES 5
 
@@ -43244,6 +43250,7 @@
 #define F_SRAM_VLD    V_SRAM_VLD(1U)
 
 #define A_MPS_T5_CLS_SRAM_L 0xe000
+#define A_MPS_T7B_CLS_SRAM_L 0xe000
 
 #define S_T6_DISENCAPOUTERRPLCT    31
 #define V_T6_DISENCAPOUTERRPLCT(x) ((x) << S_T6_DISENCAPOUTERRPLCT)
@@ -43379,6 +43386,19 @@
 
 #define A_MPS_CLS_SRAM_H 0xe004
 
+#define S_SRAMWRN    31
+#define V_SRAMWRN(x) ((x) << S_SRAMWRN)
+#define F_SRAMWRN    V_SRAMWRN(1U)
+
+#define S_SRAMINDEX    16
+#define M_SRAMINDEX    0x7ffU
+#define V_SRAMINDEX(x) ((x) << S_SRAMINDEX)
+#define G_SRAMINDEX(x) (((x) >> S_SRAMINDEX) & M_SRAMINDEX)
+
+#define S_MACPARITY2    10
+#define V_MACPARITY2(x) ((x) << S_MACPARITY2)
+#define F_MACPARITY2    V_MACPARITY2(1U)
+
 #define S_MACPARITY1    9
 #define V_MACPARITY1(x) ((x) << S_MACPARITY1)
 #define F_MACPARITY1    V_MACPARITY1(1U)
@@ -43398,10 +43418,6 @@
 #define G_PORTMAP(x) (((x) >> S_PORTMAP) & M_PORTMAP)
 
 #define A_MPS_T5_CLS_SRAM_H 0xe004
-
-#define S_MACPARITY2    10
-#define V_MACPARITY2(x) ((x) << S_MACPARITY2)
-#define F_MACPARITY2    V_MACPARITY2(1U)
 
 #define A_MPS_CLS_TCAM_Y_L 0xf000
 #define A_MPS_CLS_TCAM_DATA0 0xf000
@@ -43471,7 +43487,12 @@
 #define V_DATAVIDH1(x) ((x) << S_DATAVIDH1)
 #define G_DATAVIDH1(x) (((x) >> S_DATAVIDH1) & M_DATAVIDH1)
 
-#define S_T7_CTLTCAMSEL    25
+#define S_T7_CTLTCAMINDEX    17
+#define M_T7_CTLTCAMINDEX    0x1ffU
+#define V_T7_CTLTCAMINDEX(x) ((x) << S_T7_CTLTCAMINDEX)
+#define G_T7_CTLTCAMINDEX(x) (((x) >> S_T7_CTLTCAMINDEX) & M_T7_CTLTCAMINDEX)
+
+#define S_T7_CTLTCAMSEL    26
 #define M_T7_CTLTCAMSEL    0x3U
 #define V_T7_CTLTCAMSEL(x) ((x) << S_T7_CTLTCAMSEL)
 #define G_T7_CTLTCAMSEL(x) (((x) >> S_T7_CTLTCAMSEL) & M_T7_CTLTCAMSEL)
