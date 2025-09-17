@@ -1575,18 +1575,6 @@ alloc_eq(struct adapter *sc, struct port_info *pi, struct sge_eq *eq)
 		rc = t4_bar2_sge_qregs(sc, eq->cntxt_id, T4_BAR2_QTYPE_EGRESS,
 		    0, &udb_offset, &udb_qid);
 
-		/*
-		 * RPZ: This looks like a bug: in the rc == 0 case, the case
-		 * where things were successful and we setup UDBs, we are
-		 * setting the udb_qid, but in t4_tx_ring_db we assert that it's
-		 * zero. How would this ever work? I'm beginning to wonder if
-		 * Patrick never execersized the `eq->pending == 1` path in
-		 * t4_tx_ring_db().
-		 *
-		 * Oh wait, it depends on the type of UDB. The manual said you
-		 * can either use the segment offset or write the relative QID.
-		 * Perhaps on T7 the chip told the driver to use the QID?
-		 */
 		if (rc == 0) {
 			eq->udb = sc->bar2_ptr + udb_offset;
 			eq->udb_qid = udb_qid;
@@ -1595,9 +1583,9 @@ alloc_eq(struct adapter *sc, struct port_info *pi, struct sge_eq *eq)
 			 * In this case we have UDB capability but we cannot use
 			 * Write-Combining for this Egress Queue because it's
 			 * relative QID is greater than the number of doorbell
-			 * segments for a page. In this case we fallback to the
-			 * simple method of writing the relative QID into the
-			 * first UDB segment of the UDB page.
+			 * segments that fit in a page. In this case we fallback
+			 * to the simple method of writing the relative QID into
+			 * the first UDB segment of the UDB page.
 			 */
 			if (eq->udb_qid != 0) {
 				eq->doorbells &= ~DOORBELL_WCWR;
@@ -2736,7 +2724,6 @@ write_txpkt_wr(struct port_info *pi, struct sge_txq *txq, mblk_t *m,
 	wr->equiq_to_len16 = cpu_to_be32(ctrl);
 	wr->r3 = 0;
 
-	/* RPZ: Our LSO code is different from Linux. */
 	if (txinfo->flags & HW_LSO &&
 	    (meoi->meoi_flags & MEOI_L4INFO_SET) != 0 &&
 	    meoi->meoi_l4proto == IPPROTO_TCP) {
