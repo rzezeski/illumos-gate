@@ -1433,6 +1433,7 @@ t4_mc_getprop(void *arg, const char *name, mac_prop_id_t id, uint_t size,
 	uint8_t *u = val;
 	int rc = 0;
 
+	PORT_LOCK(pi);
 	switch (id) {
 	case MAC_PROP_DUPLEX:
 		*(link_duplex_t *)val = lc->link_ok ? LINK_DUPLEX_FULL :
@@ -1538,12 +1539,15 @@ t4_mc_getprop(void *arg, const char *name, mac_prop_id_t id, uint_t size,
 		break;
 
 	case MAC_PROP_PRIVATE:
+		PORT_UNLOCK(pi);
 		return (t4_getprop_priv(pi, name, size, val));
 
 	default:
+		PORT_UNLOCK(pi);
 		return (ENOTSUP);
 	}
 
+	PORT_UNLOCK(pi);
 	return (rc);
 }
 

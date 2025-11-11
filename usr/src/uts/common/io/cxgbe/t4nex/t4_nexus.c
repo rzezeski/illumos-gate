@@ -858,11 +858,11 @@ t4_cb_close(dev_t dev, int flag, int otyp, cred_t *credp)
 static int
 t4_cb_ioctl(dev_t dev, int cmd, intptr_t d, int mode, cred_t *credp, int *rp)
 {
-	struct adapter *sc = ddi_get_soft_state(t4_soft_state, getminor(dev));
-
 	if (crgetuid(credp) != 0) {
 		return (EPERM);
 	}
+
+	struct adapter *sc = ddi_get_soft_state(t4_soft_state, getminor(dev));
 
 	if (sc == NULL) {
 		return (EINVAL);
@@ -1672,9 +1672,10 @@ t4_init_driver_props(struct adapter *sc)
 	(void) ddi_prop_update_int(dev, dip, "write-combine",
 	    p->write_combine ? 1 : 0);
 
-	p->t4_fw_install = prop_lookup_bool(sc, "t4_fw_install", true);
-	(void) ddi_prop_update_int(dev, dip, "t4_fw_install",
-	    p->t4_fw_install ? 1 : 0);
+	p->t4_fw_install = prop_lookup_int(sc, "t4_fw_install", 1);
+	if (p->t4_fw_install != 0 && p->t4_fw_install != 2)
+		p->t4_fw_install = 1;
+	(void) ddi_prop_update_int(dev, dip, "t4_fw_install", p->t4_fw_install);
 }
 
 /*
@@ -2505,7 +2506,7 @@ t4_mbox_wait_owner(struct adapter *sc, uint_t wait_us, bool sleep_ok)
 		if (head->thread == curthread) {
 			/*
 			 * CV was signaled and this thread now occupies the head
-			 * of the list (indicating mbox ownership
+			 * of the list (indicating mbox ownership).
 			 */
 			mutex_exit(&sc->mbox_lock);
 			return (true);

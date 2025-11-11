@@ -66,6 +66,12 @@ struct sge_fl;
 #define	UDBS_DB_OFFSET	8	/* offset of the 4B doorbell in a segment */
 #define	UDBS_WR_OFFSET	64	/* offset of the work request in a segment */
 
+/*
+ * A sentinel to mark when the interrupts for an IQ are being forwarded from
+ * another IQ which is receiving the actual interrupt.
+ */
+#define	INTR_FORWARDED	UINT_MAX
+
 struct fl_desc {
 	uint64_t dptr[FL_BUF_PER_BLOCK];
 };
@@ -157,7 +163,8 @@ struct sge_iq {
 	/*
 	 * When interrupt forwarding is not in use (such as for IQs which
 	 * receive the forwarded notifications themselves), intr_idx holds the
-	 * index of the interrupt index assigned to this IQ.
+	 * index of the interrupt index assigned to this IQ. When interrupts are
+	 * being forwarded it holds the value INTR_FORWARDED.
 	 */
 	uint_t intr_idx;
 
@@ -421,6 +428,10 @@ struct port_info {
 	/* IQ for queue events, when interrupt is available for it */
 	struct sge_iq	intr_iq;
 
+	kstat_t *ksp_config;
+	kstat_t *ksp_info;
+	kstat_t *ksp_fec;
+
 	/* Port attributes/data set by common code: */
 	uint16_t	viid;
 	uint16_t	rss_size;	/* size of VI's RSS table slice */
@@ -442,11 +453,6 @@ struct port_info {
 
 	struct link_config link_cfg;
 	uint8_t		macaddr_cnt;
-
-	struct port_stats stats;
-	kstat_t *ksp_config;
-	kstat_t *ksp_info;
-	kstat_t *ksp_fec;
 
 	u8 vivld;
 	u8 vin;
@@ -515,7 +521,7 @@ struct driver_properties {
 	uint_t holdoff_pktcnt[SGE_NCOUNTERS];
 
 	bool write_combine;
-	bool t4_fw_install;
+	int t4_fw_install;
 };
 
 typedef struct t4_mbox_waiter {

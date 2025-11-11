@@ -821,8 +821,7 @@ repeat:
 				const uint_t new_total =
 				    totals.sit_rx_bytes + pkt_len;
 
-				if (byte_limit != 0 &&
-				    new_total > byte_limit) {
+				if (byte_limit != 0 && new_total > byte_limit) {
 					rc = TIR_BUDGET_MAX;
 					goto bail;
 				}
@@ -890,11 +889,11 @@ repeat:
 
 		case X_RSPD_TYPE_INTR:
 			/*
-			 * Interrupts should be forwarded only to queues that
-			 * are not forwarding their interrupts.
+			 * Interrupts should be delivered only to queues that do
+			 * not have their interrupts forwarded.
 			 */
-			ASSERT(iq->intr_evtq == NULL);
-			ASSERT(iq->iqtype == TIQT_EVENT);
+			ASSERT3P(iq->intr_evtq, ==, NULL);
+			ASSERT3S(iq->iqtype, ==, TIQT_EVENT);
 
 			totals.sit_intr++;
 			const uint32_t tgt_qid = BE_32(ctrl.pldbuflen_qid);
@@ -936,15 +935,32 @@ repeat:
 			if (fl != NULL) {
 				(void) t4_fl_periodic_refill(fl);
 			}
+
+			/*
+			 * We have spent our budget on the current IQ. Now we
+			 * dispatch forwarded interrupts to their respective
+			 * IQs. If we are here as an IQ with forwarded
+			 * interrupts, then iql_fwd is always empty.
+			 */
 			if (!list_is_empty(&iql_fwd)) {
+				ASSERT3P(iq->intr_evtq, ==, NULL);
+				ASSERT3S(iq->iqtype, ==, TIQT_EVENT);
 				t4_iq_service_notified(iq, &iql_fwd);
 			}
 		}
 	}
 
 bail:
-	/* Dispatch any forwarded interrupts processed from the IQ */
-	t4_iq_service_notified(iq, &iql_fwd);
+	/*
+	 * Dispatch any forwarded interrupts seen by this IQ. If we are here as
+	 * an IQ with forwarded interrupts, then iql_fwd is always empty.
+	 */
+	if (!list_is_empty(&iql_fwd)) {
+		ASSERT3P(iq->intr_evtq, ==, NULL);
+		ASSERT3S(iq->iqtype, ==, TIQT_EVENT);
+		t4_iq_service_notified(iq, &iql_fwd);
+	}
+
 	if (rc == TIR_SUCCESS && !list_is_empty(&iql_fwd)) {
 		/*
 		 * Some of the IQs receiving interrupt notifications may still
@@ -1054,7 +1070,7 @@ t4_eth_tx(void *arg, mblk_t *frame)
 
 	TXQ_LOCK(txq);
 	if ((eq->flags & EQ_ENABLED) == 0) {
-		/* drop packets immediate if EQ is not enabled */
+		/* Apply flow control until EQ is enabled. */
 		TXQ_UNLOCK(txq);
 		return (frame);
 	}
@@ -1199,7 +1215,7 @@ t4_alloc_iq(struct port_info *pi, const struct t4_iq_params *tip,
 	iq->qsize = P2ROUNDUP(tip->tip_qsize, 16);
 	iq->esize = MAX(tip->tip_esize, 16);
 	iq->intr_evtq = intr_fwd ? tip->tip_intr_evtq : NULL;
-	iq->intr_idx = intr_fwd ? UINT_MAX : intr_idx;
+	iq->intr_idx = intr_fwd ? INTR_FORWARDED : intr_idx;
 
 	const size_t len = iq->qsize * iq->esize;
 	rc = alloc_desc_ring(sc, len, DDI_DMA_READ, &iq->desc_dhdl,
@@ -1456,6 +1472,7 @@ t4_alloc_evt_iqs(struct adapter *sc)
 		.tip_qsize	= FW_IQ_QSIZE,
 		.tip_esize	= FW_IQ_ESIZE,
 		.tip_cong_chan	= -1,
+		.tip_intr_evtq	= NULL,
 		/*
 		 * The device error-handling interrupt always occupies the 0th
 		 * slot, which the firmware queue will share if no additional
@@ -1484,6 +1501,7 @@ t4_alloc_evt_iqs(struct adapter *sc)
 				.tip_qsize	= FW_IQ_QSIZE,
 				.tip_esize	= FW_IQ_ESIZE,
 				.tip_cong_chan	= -1,
+				.tip_intr_evtq	= NULL,
 				.tip_intr_idx	= 2 + i,
 			};
 			const int rc =
@@ -2158,7 +2176,7 @@ t4_sfl_process(void *arg)
 		fl = next;
 	}
 
-	if (list_is_empty(&sc->sfl_list)) {
+	if (!list_is_empty(&sc->sfl_list)) {
 		t4_sfl_reschedule(sc);
 	}
 	mutex_exit(&sc->sfl_lock);
@@ -2729,6 +2747,7 @@ write_txpkts_wr(struct sge_txq *txq, struct txpkts *txpkts)
 		    V_FW_WR_LEN16(howmany(txpkts->nflits, 2)) |
 		    (eq->avail == ndesc) ?
 		    (F_FW_WR_EQUEQ | F_FW_WR_EQUIQ) : 0),
+		.r3 = 0,
 		.plen = BE_16(txpkts->plen),
 		.npkt = txpkts->npkt,
 		.type = 0,
