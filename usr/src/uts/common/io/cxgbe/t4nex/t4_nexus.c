@@ -53,6 +53,28 @@
 #include "common/t4_extra_regs.h"
 
 /*
+ *
+ * RPZ Things to write about in big theory statement
+ *
+ *  - how we use T4 chip in NIC/L2 mode, and make use of "tunneled" packets
+ *  - queues and credits
+ *  - explain flits and their size (8 bytes), as the various stuctures
+ *    in the chelsio docs are described in flits+bits and some of the
+ *    code uses flits to index into the CPLs
+ *  - difference bewteen EQs and IQs
+ *  - how FLs are used to provide Rx buffers to receive data from chip
+ *  - how FLs are associated with IQs
+ *  - what WRs are and how we use them
+ *  - what CPLs are and how we use them
+ *  - how are Rx interrupts programmed
+ *  - how are Tx interrupts programmed
+ *  - how we use interrupt forwarding
+ *  - what are VIs and how do we use them
+ *  - what is the locking scheme for the port and other structures?
+ *  - what stats do we collect and what do they mean?
+ *
+ *
+ *
  * Nexus driver for Chelsio Teminator 4-6 Network Adapters
  *
  * This driver is designed to support the Chelsio Terminator series of network
