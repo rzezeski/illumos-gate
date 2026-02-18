@@ -850,7 +850,13 @@ struct mac_soft_ring_set_s {
 	kcondvar_t	srs_async;	/* cv for worker thread */
 	kcondvar_t	srs_cv;		/* cv for poll thread */
 	timeout_id_t	srs_tid;	/* timeout id for pending timeout */
-
+	mac_lro_state_t	*srs_lro;
+	kmutex_t	srs_lro_lock; /* protect srs_lro */
+	/*
+	 * RPZ move this below srs_count to
+	 * avoid hole?
+	 */
+	uint_t		srs_lro_len;
 	/*
 	 * List of soft rings & processing function.
 	 * The following block is protected by Rx quiescence.

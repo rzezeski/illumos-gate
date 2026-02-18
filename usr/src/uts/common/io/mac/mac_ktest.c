@@ -398,6 +398,78 @@ pkt_result_compare_chain(ktest_ctx_hdl_t *ctx, const emul_test_params_t *etp,
 	return (B_TRUE);
 }
 
+/*
+ * A no-op free function for desballoc() for the case where the backing
+ * buffer is a section of a larger "arena" that is freed as a whole.
+ */
+static void
+free_noop(caddr_t arg)
+{
+	return;
+}
+
+static frtn_t noop_frtn = (frtn_t){
+	.free_func = free_noop,
+	.free_arg = NULL,
+};
+
+static void
+deserialize_to_mpchain(ktest_ctx_hdl_t *ctx, uint8_t *stream, size_t len,
+    mblk_t **head, mblk_t **tail, size_t *chain_cnt, size_t *chain_len)
+{
+	size_t remaining = len;
+	mblk_t *mpchain = NULL;
+	uint8_t *cur = stream;
+
+	uint_t idx = 0;
+	while (remaining != 0) {
+		/* RPZ why is this called "inner" pkt len? */
+		uint32_t inner_pkt_len;
+		if (remaining < sizeof (inner_pkt_len)) {
+			KT_ERROR(ctx, "insufficient bytes to read packet len "
+			    "at index %u", idx);
+			return;
+		}
+		bcopy(cur, &inner_pkt_len, sizeof (inner_pkt_len));
+		remaining -= sizeof (inner_pkt_len);
+		cur += sizeof (inner_pkt_len);
+
+		if (remaining < inner_pkt_len) {
+			KT_ERROR(ctx, "wanted %u bytes to read packet at index"
+			    "%u, had %u", inner_pkt_len, idx, remaining);
+			return;
+		}
+
+		mblk_t *mp = desballoc(cur, inner_pkt_len, 0, &noop_frtn);
+		mp->b_wptr += inner_pkt_len;
+		*chain_cnt += 1;
+		*chain_len += inner_pkt_len;
+
+		/* RPZ There are also the INNER csum flags to think about,
+		 * for now I'm ignoring that. */
+		mac_hcksum_set(mp, 0, 0, 0, 0,
+		    HCK_IPV4_HDRCKSUM_OK|HCK_FULLCKSUM_OK);
+
+		if (*head == NULL) {
+			*head = mp;
+			*tail = mp;
+		} else {
+			(*tail)->b_next = mp;
+			*tail = mp;
+		}
+
+		remaining -= inner_pkt_len;
+		cur += inner_pkt_len;
+		idx++;
+		mp = mp->b_next;
+	}
+
+	if (remaining != 0) {
+		KT_FAIL(ctx, "malformed packet stream");
+		return;
+	}
+}
+
 static void
 mac_hw_emul_test(ktest_ctx_hdl_t *ctx, emul_test_params_t *etp)
 {
@@ -597,6 +669,211 @@ mac_sw_lso_test(ktest_ctx_hdl_t *ctx)
 
 cleanup:
 	etp_free(&etp);
+}
+
+static const char snoop_magic[8] = "snoop\0\0\0";
+static const uint32_t snoop_acceptable_vers = 2;
+
+typedef struct snoop_pkt_hdr {
+	uint32_t		sph_origlen;
+	uint32_t		sph_msglen;
+	uint32_t		sph_totlen;
+	uint32_t		sph_drops;
+#if defined(_LP64)
+	struct timeval32	sph_timestamp;
+#else
+#error	"ktest is expected to be 64-bit for now"
+#endif
+} snoop_pkt_hdr_t;
+
+/*
+ * Create a snoop pcap file from a chain of mblks. All content is copied
+ * into buf. Return false if the mblk contents do not fit into the buffer..
+ */
+static boolean_t
+mpchain_to_pcap(mblk_t *head, uint8_t *buf, size_t len, size_t *used)
+{
+	VERIFY3P(head, !=, NULL);
+	VERIFY3P(buf, !=, NULL);
+	VERIFY3U(len, >, 0);
+
+	size_t off = 0;
+	bcopy(snoop_magic, &buf[off], sizeof (snoop_magic));
+	off += sizeof (snoop_magic);
+
+	uint32_t tmp = htonl(snoop_acceptable_vers);
+	/* uint_t *versp = (void *)&buf[off]; */
+	/* *versp = htonl(snoop_acceptable_vers); */
+	bcopy(&tmp, &buf[off], sizeof (snoop_acceptable_vers));
+	off += sizeof (tmp);
+
+	/* Ethernet */
+	/* uint_t *linkp = (void *)&buf[off]; */
+        tmp = htonl(4);
+	bcopy(&tmp, &buf[off], sizeof (uint32_t));
+	off += sizeof (tmp);
+
+	mblk_t *mp = head;
+	while (mp != NULL) {
+		mac_ether_offload_info_t outer = {0};
+		snoop_pkt_hdr_t ph = {0};
+
+		if (len - off < sizeof (ph)) {
+			return (B_FALSE);
+		}
+
+		/*
+		 * For now we assume this function is only called on
+		 * chains single mblk packets.
+		 */
+		VERIFY3P(mp->b_rptr, !=, NULL);
+		VERIFY3P(mp->b_wptr, !=, NULL);
+		VERIFY3P(mp->b_wptr, >, mp->b_rptr);
+
+		mac_ether_offload_info(mp, &outer, NULL);
+
+		/* Pad to align snoop_pkt_hdr_t. */
+		size_t pad = P2NPHASE(outer.meoi_len, 4);
+		ph.sph_origlen = htonl(outer.meoi_len);
+		ph.sph_msglen = htonl(outer.meoi_len);
+		ph.sph_totlen = htonl(sizeof (ph) + outer.meoi_len + pad);
+		ph.sph_drops = 0;
+		ph.sph_timestamp.tv_sec = 0xFADE1234;
+
+		bcopy(&ph, &buf[off], sizeof (ph));
+		off += sizeof (ph);
+
+		mblk_t *pkt_chunk = mp;
+		while (pkt_chunk != NULL) {
+			size_t chunklen = MBLKL(pkt_chunk);
+
+			if (len - off < chunklen) {
+				return (B_FALSE);
+			}
+
+			DTRACE_PROBE3(mac__ktest__mpchain_to_pcap__chunk,
+			    mblk_t *, mp, size_t, off, size_t, chunklen);
+
+			bcopy(mp->b_rptr, &buf[off], chunklen);
+			off += chunklen;
+			pkt_chunk = pkt_chunk->b_cont;
+		}
+
+		if (len - off < pad) {
+			return (B_FALSE);
+		}
+
+		bzero(&buf[off], pad);
+		off += pad;
+		mp = mp->b_next;
+	}
+
+	*used = off;
+	return (B_TRUE);
+}
+
+static void
+mac_sw_lro_test(ktest_ctx_hdl_t *ctx)
+{
+	uchar_t *bytes = NULL;
+	size_t num_bytes = 0;
+
+	ktest_get_input(ctx, &bytes, &num_bytes);
+
+	if (num_bytes == 0) {
+		KT_ERROR(ctx, "pcap is empty");
+		goto clean;
+	}
+
+	size_t bcnt = 0;
+	size_t blen = 0;
+	mblk_t *head = NULL;
+	mblk_t *tail = NULL;
+
+	deserialize_to_mpchain(ctx, bytes, num_bytes, &head, &tail, &bcnt,
+	    &blen);
+
+	mblk_t *mp = head;
+	while (mp != NULL) {
+		mac_ether_offload_info_t outer = {0};
+		mac_ether_offload_info_t inner = {0};
+
+		mac_ether_offload_info(head, &outer, NULL);
+
+		if ((outer.meoi_flags & MEOI_L3INFO_SET) != 0 &&
+		    outer.meoi_l4proto == IPPROTO_UDP) {
+			/* RPZ TODO assuming aligned and that udp header
+			 * is in first mblk */
+			udpha_t *udp = (udpha_t*)(mp->b_rptr +
+			    outer.meoi_l2hlen + outer.meoi_l3hlen);
+			if (ntohs(udp->uha_dst_port) == 6081) {
+				/* RPZ SEe mac_sched.c for why I'm doing
+				 * all this. */
+				outer.meoi_tuntype = METT_GENEVE;
+				mp->b_datap->db_pktinfo.t_tuntype = METT_GENEVE;
+				mac_ether_offload_info(mp, &outer, NULL);
+				mac_ether_set_pktinfo(mp, &outer, NULL);
+				mac_ether_offload_info(mp, &outer, &inner);
+				mac_ether_set_pktinfo(mp, &outer, &inner);
+			} else {
+				mac_ether_set_pktinfo(mp, &outer, NULL);
+			}
+		} else {
+			mac_ether_set_pktinfo(mp, &outer, NULL);
+		}
+
+		mp = mp->b_next;
+	}
+
+	int acnt = bcnt;
+	size_t alen = blen;
+
+	mac_lro_state_t *lro = NULL;
+	uint_t lro_len = 0;
+	mac_lro_alloc(&lro, &lro_len);
+	mac_sw_lro(lro, lro_len, &head, &tail, &acnt, &alen);
+
+	/* RPZ I'm letting ktest return ENOBUFS in this case. But perhaps
+	 * it should be failure here instead. */
+	/* if (alen > ktest_out_len(ctx)) { */
+	/* 	/\* RPZ different format specifier for size_t? *\/ */
+	/* 	KT_ERROR(ctx, "output buffer not large enough, %lu < %lu", */
+	/* 	    ktest_out_len(ctx), alen); */
+	/* 	goto clean; */
+	/* } */
+
+	/*
+	 * RPZ TODO I don't think the test should allocate the output
+	 * buffer. The ktest framework should allocate the output buffer
+	 * based on the size of the user-supplied output buffer. The
+	 * framework should then have a function to get the output buffer
+	 * address and length: ktest_get_output(uint8_t *out, size_t
+	 * *out_len). If the output buffer is not large enough to fit the
+	 * test's output, then it should indicate so with a test failure.
+	 */
+	/* uint8_t *out_buf = kmem_zalloc(alen, KM_SLEEP); */
+
+	uint8_t *out = NULL;
+	size_t out_len = 0;
+	size_t used_len = 0;
+	ktest_get_outbuf(ctx, &out, &out_len);
+
+	if (!mpchain_to_pcap(head, out, out_len, &used_len)) {
+		KT_ERROR(ctx, "failed to convert mblk chain to pcap");
+		goto clean;
+	}
+
+	ktest_set_outused(ctx, used_len);
+
+	/* ktest_result_output(ctx, out_buf, alen); */
+
+	KT_PASS(ctx);
+clean:
+	/* RPZ TODO Can I free the mp chain 'head' here? Do we need that
+	 * to live until it can be copied out? Hmmmmmm*/
+	if (lro != NULL && lro_len != 0) {
+		mac_lro_free(lro, lro_len);
+	}
 }
 
 typedef struct meoi_test_params {
@@ -1957,6 +2234,11 @@ _init()
 	    mac_sw_lso_geneve_ipv4_test, KTEST_FLAG_NONE));
 	VERIFY0(ktest_add_test(ks, "mac_sw_lso_vxlan_ipv4_test",
 	    mac_sw_lso_vxlan_ipv4_test, KTEST_FLAG_NONE));
+
+	ks = NULL;
+	VERIFY0(ktest_add_suite(km, "lro", &ks));
+	VERIFY0(ktest_add_test(ks, "mac_sw_lro_test",
+	    mac_sw_lro_test, KTEST_FLAG_INPUT));
 
 	ks = NULL;
 	VERIFY0(ktest_add_suite(km, "parsing", &ks));

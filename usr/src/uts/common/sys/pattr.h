@@ -143,6 +143,9 @@ typedef struct pattr_hcksum_s {
 
 #define	HW_LSO_FLAGS		HW_LSO	/* All LSO flags, currently only one */
 
+/* The mblk is the result of software LRO. */
+#define	MBLK_SW_LRO		0x1000
+
 /*
  * Structure used for zerocopy attribute.
  */

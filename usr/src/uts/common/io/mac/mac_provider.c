@@ -2547,7 +2547,7 @@ mac_ether_any_set_pktinfo(const mblk_t *mp)
 static inline void
 pack_pktinfo(dblk_t *db, const mac_ether_offload_info_t *info)
 {
-	ASSERT3S(info->meoi_tuntype, ==, METT_NONE);
+	VERIFY3S(info->meoi_tuntype, ==, METT_NONE);
 	VERIFY3S(info->meoi_flags & MEOI_TUNINFO_SET, ==, 0);
 
 	db->db_pktinfo.p_flags = (info->meoi_flags & MEOI_FULL) |
@@ -2597,7 +2597,7 @@ unpack_tunpktinfo(const dblk_t *db, mac_ether_offload_info_t *info)
 static inline void
 pack_tunpktinfo(dblk_t *db, const mac_ether_offload_info_t *info)
 {
-	ASSERT3S(info->meoi_tuntype, !=, METT_NONE);
+	VERIFY3S(info->meoi_tuntype, !=, METT_NONE);
 
 	/* Drop L4INFO_SET, shift all flags in from TUNINFO_SET onward */
 	const mac_ether_offload_flags_t base =

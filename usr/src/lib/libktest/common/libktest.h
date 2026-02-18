@@ -38,6 +38,8 @@ typedef struct ktest_run_req {
 	const char	*krq_test;
 	uchar_t		*krq_input;
 	size_t		krq_input_len;
+	uint8_t		*krq_output;
+	size_t		krq_output_len;
 } ktest_run_req_t;
 
 typedef enum ktest_code {
@@ -52,6 +54,7 @@ typedef struct ktest_run_result {
 	ktest_code_t	krr_code;
 	char		*krr_msg;
 	uint_t		krr_line;
+	size_t		krr_output_used;
 } ktest_run_result_t;
 
 extern ktest_hdl_t *ktest_init(void);

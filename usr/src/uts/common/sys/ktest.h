@@ -10,7 +10,7 @@
  */
 
 /*
- * Copyright 2023 Oxide Computer Company
+ * Copyright 2026 Oxide Computer Company
  * Copyright 2024 Ryan Zezeski
  */
 
@@ -106,7 +106,14 @@ typedef struct ktest_result {
 	char			kr_msg[KTEST_MAX_LOG_LEN];
 	ktest_result_type_t	kr_type;
 	int			kr_line;
+	uint8_t			*kr_output;
+	size_t			kr_output_len;
+	size_t			kr_output_used;
 } ktest_result_t;
+
+typedef enum kro_flags {
+	KRO_OUTPUT = 1 << 0,
+} kro_flags_t;
 
 typedef struct ktest_run_op {
 	char		kro_module[KTEST_MAX_NAME_LEN];
@@ -115,7 +122,11 @@ typedef struct ktest_run_op {
 	char		kro_input_path[MAXPATHLEN];
 	uchar_t		*kro_input_bytes;
 	uint64_t	kro_input_len;
+	/* RPZ the user needs to allocate the buffer */
+	/* uint8_t		*kro_output_bytes; */
+	/* size_t		kro_output_len; */
 	ktest_result_t	kro_result;
+	kro_flags_t	kro_flags;
 } ktest_run_op_t;
 
 typedef struct ktest_list_op {
@@ -167,6 +178,11 @@ void ktest_result_error(ktest_ctx_hdl_t *, int, const char *, ...);
 void ktest_result_pass(ktest_ctx_hdl_t *, int);
 void ktest_msg_clear(ktest_ctx_hdl_t *);
 void ktest_msg_prepend(ktest_ctx_hdl_t *, const char *fmt, ...);
+
+/* void ktest_result_output(ktest_ctx_hdl_t *, uint8_t *, uint64_t); */
+
+void ktest_get_outbuf(ktest_ctx_hdl_t *, uint8_t **, size_t *);
+void ktest_set_outused(ktest_ctx_hdl_t *, size_t);
 
 /*
  * Note: All the macros wrap the stringizing parameters in parentheses,

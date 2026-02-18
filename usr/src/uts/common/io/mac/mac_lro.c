@@ -27,12 +27,21 @@
 #include <sys/kmem.h>
 #include <sys/mac_impl.h>
 #include <inet/tcp_impl.h>
+#include <inet/udp_impl.h>
 #include <sys/sdt.h>
 
+/*
+ *
+ * MLF_GENVE
+ *
+ *     The LRO state is for a Geneve ecapsulated flow.
+ */
 typedef enum mac_lro_flags {
 	MLF_VALID	= 1 << 0,
 	MLF_IPV4	= 1 << 1,
 	MLF_TS_VALID	= 1 << 2,
+	MLF_GENEVE	= 1 << 3,
+	MLF_L2_INCLUDED	= 1 << 4,
 } mac_lro_flags_t;
 
 struct mac_lro_state_s {
@@ -42,6 +51,25 @@ struct mac_lro_state_s {
 	mblk_t		*mls_head;
 	mblk_t		*mls_tail;
 	tcpha_t		*mls_tcp;
+
+	/*
+	 * RPZ Currently this only supports IPv6/UDP based encap.
+	 *
+	 * Since we are in receiving context:
+	 *     lport = src port
+	 *     dport = dest ort
+	 *
+	 */
+	in6_addr_t	mls_encap_src;
+	in6_addr_t	mls_encap_dst;
+	uint16_t	mls_encap_lport;
+	uint16_t	mls_encap_fport;
+	/* uint_t		mls_encap_ip6len; */
+	/* uint_t		mls_encap_udplen; */
+
+	/* RPZ TODO Instead of caching all these header values we could
+	 * just point to the headers and bcmp() values for matching.
+	 * Although that might mean more pointer chasing. */
 
 	/*
 	 * These fields are kept in network endianness and (with the exception
@@ -60,15 +88,30 @@ struct mac_lro_state_s {
 	 * These fields are kept in host endianness.
 	 */
 	mac_lro_flags_t	mls_flags;
-	uint_t		mls_len;
+	/* uint_t		mls_len; */
 	uint_t		mls_count;
+	/* RPZ The number of bytes remaining before this LRO must commit. */
+	uint32_t	mls_remain;
 	uint32_t	mls_exp_seq;
 	uint32_t	mls_tsval;
 	uint32_t	mls_tsecr;
+
+	uint8_t		mls_outer_l4hlen;
+	uint8_t		mls_outer_tunhlen;
+	uint8_t		mls_inner_l2hlen;
+	uint8_t		mls_inner_l3hlen;
+	/* Offset of non-encap IP header from b_rptr. */
+	uint8_t		mls_ip_offset;
+
+	ip6_t		*mls_encap_ip6;
+	udpha_t		*mls_encap_udp;
 };
 
 /*
  * Number of LRO entries to allocate for a soft ring.
+ *
+ * RPZ TODO This should be configurable. Perhaps on a per-link or
+ * per-client basis via dladm?
  */
 uint_t mac_lro_cache_size = 8;
 
@@ -76,7 +119,7 @@ uint_t mac_lro_cache_size = 8;
  * Rough statistics. We don't try and serialize these across CPUs, so they will
  * be lossy.
  */
-uint_t mac_lro_slot_misses;
+uint_t mac_lro_full;
 
 void
 mac_lro_free(mac_lro_state_t *lrop, uint_t count)
@@ -144,11 +187,33 @@ mac_lro_commit(mac_lro_state_t *lro, mblk_t **headp, mblk_t **tailp)
 {
 	tcpha_t *tcp;
 
-	ASSERT3S((lro->mls_flags & MLF_VALID), !=, 0);
-	ASSERT3U(lro->mls_count, >, 0);
+	VERIFY3S((lro->mls_flags & MLF_VALID), !=, 0);
+	VERIFY3U(lro->mls_count, >, 0);
 	if (lro->mls_count == 1) {
 		goto done;
 	}
+
+	/* RPZ Make sure mls_remain did not underflow */
+	VERIFY3U(lro->mls_remain, <, IP_MAXPACKET);
+	uint16_t len = IP_MAXPACKET - lro->mls_remain;
+
+	/* RPZ TODO NEXT Need to check for MLF_GENEVE and update headers
+	 * accordingly */
+	if ((lro->mls_flags & MLF_GENEVE) != 0) {
+		/*
+		 * IPv6 payload len does not include the IPv6 header
+		 * length; and UDP length does include the UDP header
+		 * length.
+		 */
+		lro->mls_encap_ip6->ip6_plen = htons(len);
+		lro->mls_encap_udp->uha_length = htons(len);
+
+		/* Now that the outer len is set, subtract headers to get
+		 * inner IP len. */
+		len -= lro->mls_outer_l4hlen + lro->mls_outer_tunhlen;
+	}
+
+	len -= lro->mls_inner_l2hlen;
 
 	/*
 	 * We've joined multiple segments. This means that we need to update the
@@ -163,18 +228,61 @@ mac_lro_commit(mac_lro_state_t *lro, mblk_t **headp, mblk_t **tailp)
 	 *  o TCP flags
 	 */
 	tcp = lro->mls_tcp;
-	ASSERT3U(lro->mls_len, <=, IP_MAXPACKET);
+	/* ASSERT3U(lro->mls_len, <=, IP_MAXPACKET); */
+	/* RPZ Make sure mls_remain did not underflow */
+	/* VERIFY3U(lro->mls_remain, <, IP_MAXPACKET); */
+	/* uint16_t len = IP_MAXPACKET - lro->mls_remain; */
+
 	if ((lro->mls_flags & MLF_IPV4) != 0) {
-		ipha_t *ip = (ipha_t *)lro->mls_head->b_rptr;
-		ip->ipha_length = htons((uint16_t)lro->mls_len);
-		ip->ipha_hdr_checksum = 0;
+		ipha_t *ip = (ipha_t *)(lro->mls_head->b_rptr +
+		    lro->mls_ip_offset);
+		/*
+		 * Perform incremental update of the checksum by
+		 * subtracting the old length from the sum and adding the
+		 * new length.
+		 */
+		uint32_t ipsum = ip->ipha_hdr_checksum;
+		ipsum += (uint32_t)(ip->ipha_length);
+		ipsum += (uint32_t)(~htons(len) & 0xFFFF);
+		while (ipsum >> 16) {
+			ipsum = (ipsum & 0xFFFF) + (ipsum >> 16);
+		}
+		if (ipsum == 0) {
+			ipsum = 0xFFFF;
+		}
+		ip->ipha_hdr_checksum = (uint16_t)ipsum;
+		ip->ipha_length = htons(len);
+
+		/*
+		 * At this point len contains the L4 (TCP) header length +
+		 * payload.
+		 */
+		len -= lro->mls_inner_l3hlen;
+
+		uint32_t pcsum = 0;
+		pcsum += (ip->ipha_src >> 16) + (ip->ipha_src & 0xFFFF);
+		pcsum += (ip->ipha_dst >> 16) + (ip->ipha_dst & 0xFFFF);
+		pcsum += htons(IPPROTO_TCP);
+		pcsum += htons(len);
+
+		while (pcsum >> 16) {
+			pcsum = (pcsum & 0xFFFF) + (pcsum >> 16);
+		}
+
+		tcp->tha_sum = (uint16_t)pcsum;
 	} else {
-		ip6_t *ip = (ip6_t *)lro->mls_head->b_rptr;
-		ip->ip6_plen = htons((uint16_t)lro->mls_len);
+		ip6_t *ip = (ip6_t *)(lro->mls_head->b_rptr +
+		    lro->mls_ip_offset);
+		/* IPv6 does not include the header in the length. */
+		ip->ip6_plen = htons(len - lro->mls_inner_l3hlen);
+
+		/* RPZ TODO need to calculate pcsum for IPv6. */
+		tcp->tha_sum = 0;
 	}
+
 	tcp->tha_ack = lro->mls_tcp_ack;
 	tcp->tha_win = lro->mls_tcp_window;
-	tcp->tha_sum = 0;
+
 	if ((lro->mls_flags & MLF_TS_VALID) != 0) {
 		uint32_t *ts = (uint32_t *)(tcp + 1);
 		ts[1] = htonl(lro->mls_tsval);
@@ -186,6 +294,7 @@ done:
 	DTRACE_PROBE3(mac__lro__commit, mblk_t *, lro->mls_head,
 	    mac_lro_state_t *, lro, tcpha_t *, tcp);
 	mac_lro_append_bnext(lro->mls_head, headp, tailp);
+	(*headp)->b_datap->db_struioun.cksum.flags |= MBLK_SW_LRO;
 	ASSERT3P(*tailp, ==, lro->mls_head);
 	ASSERT3P(lro->mls_tail->b_cont, ==, NULL);
 	ASSERT3P(lro->mls_tail->b_next, ==, NULL);
@@ -243,16 +352,74 @@ typedef enum mac_lro_suitable {
 	MLS_MBLK_LAYOUT,
 	MLS_IPV4_OPTS,
 	MLS_IPV6_EH,
-	MLS_CKSUM,
+	MLS_L3_CKSUM,
+	MLS_L4_CKSUM,
 	MLS_TCP_OPTS,
-
+	MLS_TUN_TYPE,
 } mac_lro_suitable_t;
 
 static mac_lro_suitable_t
-mac_sw_lro_is_suitable(const mblk_t *mp, const mac_ether_offload_info_t *meoi,
+mac_sw_lro_encap_is_suitable(const mblk_t *mp, const mac_ether_offload_info_t *meoi,
     uint32_t hck_flags)
 {
-	/* Must be IPv4 or IPv6 and TCP */
+	/* Must be IPv6 + UPD. */
+	if ((meoi->meoi_flags & MEOI_L3INFO_SET) == 0 ||
+	    (meoi->meoi_flags & MEOI_L4INFO_SET) == 0) {
+		return (MLS_L3_PROTO);
+	}
+
+	if (meoi->meoi_l3proto != ETHERTYPE_IPV6) {
+		return (MLS_L3_PROTO);
+	}
+
+	if (meoi->meoi_l4proto != IPPROTO_UDP) {
+		return (MLS_L4_PROTO);
+	}
+
+	/* RPZ Is it correct to check for both FRAG_MORE and FRAG_OFFSET? Or
+	 * should it just be one of them? */
+	/* Cannot be fragmented */
+	if ((meoi->meoi_flags & (MEOI_L3_FRAG_MORE|MEOI_L3_FRAG_OFFSET)) != 0) {
+		return (MLS_FRAGMENT);
+	}
+
+	/* First mblk does not contain all headers */
+	const uint_t hdr_size = meoi->meoi_l2hlen + meoi->meoi_l3hlen +
+	    meoi->meoi_l4hlen + meoi->meoi_tunhlen;
+	if (MBLKL(mp) < hdr_size) {
+		return (MLS_MBLK_LAYOUT);
+	}
+
+	/* IPv6 must not carry extension headers */
+	if (meoi->meoi_l3hlen != IPV6_HDR_LEN) {
+		return (MLS_IPV6_EH);
+	}
+
+	/* The L4 cksum must be valid */
+	if ((hck_flags & HCK_FULLCKSUM_OK) == 0) {
+		return (MLS_L4_CKSUM);
+	}
+
+	if ((meoi->meoi_flags & MEOI_FULLTUN) != 0 &&
+	    meoi->meoi_tuntype != METT_GENEVE) {
+		/*
+		 * RPZ TODO right now I'm assuming oxide, but to be
+		 * complete we would need a way for admin to
+		 * enable/disable tunneled LRO as well as specifying the
+		 * port number used to identify Geneve
+		 */
+		return (MLS_TUN_TYPE);
+	}
+
+	return (MLS_OK);
+}
+
+/* RPZ For encap packets we need to set offset to start of inner packet. */
+static mac_lro_suitable_t
+mac_sw_lro_is_suitable(const mblk_t *mp, const uint8_t offset,
+    const mac_ether_offload_info_t *meoi, uint32_t hck_flags)
+{
+	/* Must be TCP/UDP over IPv4/IPv6. */
 	if ((meoi->meoi_flags & MEOI_L3INFO_SET) == 0 ||
 	    (meoi->meoi_flags & MEOI_L4INFO_SET) == 0) {
 		return (MLS_L3_PROTO);
@@ -261,12 +428,16 @@ mac_sw_lro_is_suitable(const mblk_t *mp, const mac_ether_offload_info_t *meoi,
 	    meoi->meoi_l3proto != ETHERTYPE_IPV6) {
 		return (MLS_L3_PROTO);
 	}
+
+	/* RPZ It would be nice to support UDP LRO as well */
 	if (meoi->meoi_l4proto != IPPROTO_TCP) {
 		return (MLS_L4_PROTO);
 	}
 
+	/* RPZ Is it correct to check for both FRAG_MORE and FRAG_OFFSET? Or
+	 * should it just be one of them? */
 	/* Cannot be fragmented */
-	if ((meoi->meoi_flags & MEOI_L3_FRAGMENT) != 0) {
+	if ((meoi->meoi_flags & (MEOI_L3_FRAG_MORE|MEOI_L3_FRAG_OFFSET)) != 0) {
 		return (MLS_FRAGMENT);
 	}
 
@@ -282,8 +453,11 @@ mac_sw_lro_is_suitable(const mblk_t *mp, const mac_ether_offload_info_t *meoi,
 		if (meoi->meoi_l3hlen != IP_SIMPLE_HDR_LENGTH) {
 			return (MLS_IPV4_OPTS);
 		}
+
+		/* RPZ TODO need to use INNER csum flag when dealing with
+		 * encap? */
 		if ((hck_flags & HCK_IPV4_HDRCKSUM_OK) == 0) {
-			return (MLS_CKSUM);
+			return (MLS_L3_CKSUM);
 		}
 	}
 
@@ -293,20 +467,32 @@ mac_sw_lro_is_suitable(const mblk_t *mp, const mac_ether_offload_info_t *meoi,
 		return (MLS_IPV6_EH);
 	}
 
+	/* RPZ TODO need to use INNER csum flag when dealing with
+	 * encap? */
+
 	/* The L4 cksum must be valid */
 	if ((hck_flags & HCK_FULLCKSUM_OK) == 0) {
-		return (MLS_CKSUM);
+		return (MLS_L4_CKSUM);
 	}
 
-	/* The only TCP option permitted for now is timestamp */
-	const uint_t tcp_ts_len = (TCP_MIN_HEADER_LENGTH + TCPOPT_REAL_TS_LEN);
-	if (meoi->meoi_l4hlen > tcp_ts_len) {
-		return (MLS_TCP_OPTS);
-	} else if (meoi->meoi_l4hlen == tcp_ts_len) {
-		const uint32_t *tsp = (const uint32_t *)(mp->b_rptr +
-		    meoi->meoi_l2hlen + meoi->meoi_l3hlen + sizeof (tcpha_t));
-		if (*tsp != TCPOPT_NOP_NOP_TSTAMP) {
+	if (meoi->meoi_l4proto == IPPROTO_TCP) {
+		/* The only TCP option permitted for now is timestamp */
+		const uint_t tcp_ts_len =
+		    (TCP_MIN_HEADER_LENGTH + TCPOPT_REAL_TS_LEN);
+
+		if (meoi->meoi_l4hlen > tcp_ts_len) {
 			return (MLS_TCP_OPTS);
+		} else if (meoi->meoi_l4hlen == tcp_ts_len) {
+			/*
+			 * RPZ Need to add offset to make sure we are
+			 * accessing inner header.
+			 */
+			const uint32_t *tsp = (const uint32_t *)(mp->b_rptr +
+			    offset + meoi->meoi_l2hlen + meoi->meoi_l3hlen +
+			    sizeof (tcpha_t));
+			if (*tsp != TCPOPT_NOP_NOP_TSTAMP) {
+				return (MLS_TCP_OPTS);
+			}
 		}
 	}
 
@@ -339,6 +525,42 @@ mac_sw_lro_extract_tcp_ts(const tcpha_t *tcpha,
 	return (B_TRUE);
 }
 
+/* static inline boolean_t */
+/* mac_lro_is_full(mac_lro_state_t *lrop, uint_t new_data_len) */
+/* { */
+
+/* 	/\* */
+/* 	 * RPZ TODO: The data_len check must be diffrent */
+/* 	 * for IPv4 vs IPv6, as the former considers the */
+/* 	 * header as part of the length, and the later */
+/* 	 * does not. */
+/* 	 * */
+/* 	 * For encap we have to consider outer IPv6 */
+/* 	 * length, which includes */
+/* 	 * */
+/* 	 *  - outer UDP */
+/* 	 *  - outer Geneve */
+/* 	 *  - inner L2 */
+/* 	 *  - inner L3 */
+/* 	 *  - inner L4 */
+/* 	 *  - data_len (combined payload) */
+/* 	 *\/ */
+/* 	/\* if (force_commit || *\/ */
+/* 	/\*     data_len > IP_MAXPACKET - l->mls_len || *\/ */
+/* 	/\*     seq != l->mls_exp_seq || *\/ */
+
+/* 	uint_t remain = IP_MAXPACKET - lrop->mls_len; */
+/* 	if (lrop->mls_flags & MLF_GENEVE) { */
+/* 		/\* RPZ Maybe pull these from meoi outer since they don't change? *\/ */
+/* 		remain -= lrop->mls_encap_udplen; */
+/* 		/\* Geneve header len *\/ */
+/* 		remain -= lrop->mls_encap_hlen; */
+
+/* 		remain -= inner->meoi_l2hlen; */
+/* 		remain -= inner->meoi_l3hlen; */
+/* 		remain -= inner->meoi_l4hlen; */
+/* } */
+
 /*
  * Perform software LRO on a stream of message blocks that exist in a chain.
  * This is commonly called from soft ring processing after fanout has occurred
@@ -347,6 +569,12 @@ mac_sw_lro_extract_tcp_ts(const tcpha_t *tcpha,
  *
  *  o The packet has an IP + L4 header in the first message block. This property
  *    is currently maintained by all callers today.
+ *
+ *
+ *    RPZ TODO: Since I am now doing LRO in SRS processing this is no
+ *    longer true. We'll need some way to say if LRO should account for
+ *    outer L2 or not. This caused a bug in my new encap lro impl, because
+ *    lro commit assumed that b_rptr started at IP.
  *
  *  o The L2 header has already been consumed by the mac_rx path and so the
  *    message blocks b_rptr starts at the IP header.
@@ -376,7 +604,7 @@ mac_sw_lro_extract_tcp_ts(const tcpha_t *tcpha,
  * The combined message block has the following properties in its headers:
  *
  *  o The IP Packet Length value is updated
- *  o The IP Checksum header is zeroed
+ *  o (RPZ changed) The IP Checksum header is zeroed
  *  o The TCP header ACK is set to the last ACK seen
  *  o The TCP header flags are set to the combination of seen ACK/PUSH flags.
  *  o The TCP window is set to the last seen TCP window
@@ -395,6 +623,13 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 	mblk_t *head = NULL, *tail = NULL;
 	mblk_t *free_head = NULL, *free_tail = NULL;
 
+	/* RPZ TODO should not be accessing flags directly here, should be
+	 * behind api. */
+	/* Check if the chain was already subject to LRO. */
+	if ((*mp_chain)->b_datap->db_struioun.cksum.flags & MBLK_SW_LRO) {
+		return;
+	}
+
 	if (lrop == NULL || lrocnt == 0) {
 		return;
 	}
@@ -409,56 +644,127 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		mp->b_next = NULL;
 
 		/* Gather header info from packet */
-		mac_ether_offload_info_t meoi = { 0 };
+		mac_ether_offload_info_t *meoi = NULL;
+		mac_ether_offload_info_t outer = { 0 };
+		mac_ether_offload_info_t inner = { 0 };
 		uint32_t flags;
+
 		if (MBLKL(mp) == 0) {
 			goto skip;
 		}
-		switch (IPH_HDR_VERSION(mp->b_rptr)) {
-		case IP_VERSION:
-			meoi.meoi_l3proto = ETHERTYPE_IP;
-			meoi.meoi_flags |= MEOI_L2INFO_SET;
-			break;
-		case IPV6_VERSION:
-			meoi.meoi_l3proto = ETHERTYPE_IPV6;
-			meoi.meoi_flags |= MEOI_L2INFO_SET;
-			break;
-		default:
-			break;
-		}
-		mac_hcksum_get(mp, NULL, NULL, NULL, NULL, &flags);
-		mac_partial_offload_info(mp, 0, &meoi);
-		meoi.meoi_len = msgsize(mp);
 
-		const mac_lro_suitable_t suitable =
-		    mac_sw_lro_is_suitable(mp, &meoi, flags);
-		if (suitable != MLS_OK) {
+		/* RPZ This should have already been set at beginning of
+		 * Rx SRS processing. */
+		mac_ether_offload_info(mp, &outer, &inner);
+		mac_hcksum_get(mp, NULL, NULL, NULL, NULL, &flags);
+		meoi = &outer;
+
+		/* RPZ for now we only care about IPv6/UDP Geneve encap */
+		ip6_t *encap_ip6 = NULL;
+		uint32_t encap_ip_ecn;
+		udpha_t *encap_udp = NULL;
+		/* The offset from beginning to packet to end of last
+		 * encap header. */
+		uint_t encap_hdrs_len = 0;
+		/* The encap header and inner headers that are counted
+		 * towards the outer IP data length. */
+		uint_t encap_data_len = 0;
+		/* RPZ Don't we have bool in mac now? */
+		boolean_t is_encap = B_FALSE;
+
+		if (meoi->meoi_tuntype != METT_NONE) {
+			/* RPZ Currently only support Geneve */
+			VERIFY3U(meoi->meoi_tuntype, ==, METT_GENEVE);
+
+			mac_lro_suitable_t s = mac_sw_lro_encap_is_suitable(mp,
+			    meoi, flags);
+			if (s != MLS_OK) {
+				DTRACE_PROBE3(mac__lro__encap__unsuitable,
+				    mblk_t *, mp, mac_ether_offload_info *,
+				    meoi, mac_lro_suitable_t, s);
+			}
+
+			is_encap = B_TRUE;
+			encap_ip6 = (ip6_t *)(mp->b_rptr + meoi->meoi_l2hlen);
+			encap_ip_ecn = encap_ip6->ip6_vcf;
+			encap_udp = (udpha_t *)
+			    (mp->b_rptr + meoi->meoi_l2hlen +
+			    meoi->meoi_l3hlen);
+			/*
+			 * RPZ TODO If LRO is called from softring
+			 * processing, where the L2 header has been
+			 * stripped, then meoi_l2hlen should be 0, and
+			 * everything after this should "just work". Need
+			 * to write a ktest for this.
+			 */
+			encap_hdrs_len = meoi->meoi_l2hlen + meoi->meoi_l3hlen +
+			    meoi->meoi_l4hlen + meoi->meoi_tunhlen;
+			/* RPZ TODO this needs to include any extension
+			 * headers in the length (if we allow them for
+			 * LRO), we should be able to subtract 40 from
+			 * l3hlen */
+			encap_data_len = meoi->meoi_l4hlen + meoi->meoi_tunhlen;
+			/* RPZ Now that we've read the outer/encap
+			 * headers, lets inspect the inner. */
+			meoi = &inner;
+		}
+
+		/*
+		 * RPZ ALERT after this point need to remember to add
+		 * encap_hdr_len to b_rptr for any reference into the
+		 * data, of course I'm assuming all headers are in the
+		 * first mblk, hopefully that's true.
+		 */
+		mac_lro_suitable_t s = mac_sw_lro_is_suitable(mp, encap_hdrs_len,
+		    meoi, flags);
+		if (s != MLS_OK) {
 			DTRACE_PROBE3(mac__lro__unsuitable, mblk_t *,
-			    mp, mac_ether_offload_info_t *, &meoi,
-			    mac_lro_suitable_t, suitable);
+			    mp, mac_ether_offload_info_t *, meoi,
+			    mac_lro_suitable_t, s);
 			goto skip;
 		}
 
-		const boolean_t is_ipv4 = meoi.meoi_l3proto == ETHERTYPE_IP;
+		const boolean_t is_ipv4 = meoi->meoi_l3proto == ETHERTYPE_IP;
 		ipha_t *ip4 = NULL;
 		ip6_t *ip6 = NULL;
 		uint32_t ip_ecn;
 		if (is_ipv4) {
-			ip4 = (ipha_t *)(mp->b_rptr + meoi.meoi_l2hlen);
+			ip4 = (ipha_t *)(mp->b_rptr + encap_hdrs_len +
+			    meoi->meoi_l2hlen);
 			ip_ecn = ip4->ipha_type_of_service;
 		} else {
-			ip6 = (ip6_t *)(mp->b_rptr + meoi.meoi_l2hlen);
+			ip6 = (ip6_t *)(mp->b_rptr + encap_hdrs_len +
+			    meoi->meoi_l2hlen);
 			ip_ecn = ip6->ip6_vcf;
 		}
-		tcpha_t *tcp = (tcpha_t *)
-		    (mp->b_rptr + meoi.meoi_l2hlen + meoi.meoi_l3hlen);
+
+		tcpha_t *tcp = (tcpha_t *)(mp->b_rptr + encap_hdrs_len +
+		    meoi->meoi_l2hlen + meoi->meoi_l3hlen);
+
 		const uint_t hdr_len =
-		    meoi.meoi_l2hlen + meoi.meoi_l3hlen + meoi.meoi_l4hlen;
-		const uint_t data_len = meoi.meoi_len - hdr_len;
+		    meoi->meoi_l2hlen + meoi->meoi_l3hlen + meoi->meoi_l4hlen;
+		/*
+		 * RPZ previously we were counting all headers against the
+		 * IP_MAXPACKET/data_len calc, but we can exclude the l2
+		 * len when not in encap
+		 *
+		 *   hdr_len: Length of inner L2 + L3 + L4 headers.
+		 *
+		 *   ip_len: Length of inner L3 + L4 headers.
+		 *
+		 *   data_len: Length of inner TCP payload for this mp.
+		 *
+		 *   Remember, we are adding payload bytes to
+		 *   statically-sized L2/L3/L4 headers.
+		 */
+		const uint_t ip_len = meoi->meoi_l3hlen + meoi->meoi_l4hlen;
+		const uint_t data_len = meoi->meoi_len - hdr_len;
+		const uint8_t ip_offset = encap_hdrs_len + meoi->meoi_l2hlen;
 
 		boolean_t force_commit = B_FALSE;
-		if ((tcp->tha_flags & ~(TH_ACK | TH_PUSH)) != 0 ||
-		    tcp->tha_urp != 0) {
+		if (tcp != NULL &&
+		    ((tcp->tha_flags & ~(TH_ACK | TH_PUSH)) != 0 ||
+		    tcp->tha_urp != 0)) {
 			force_commit = B_TRUE;
 		} else if (data_len == 0) {
 			goto skip;
@@ -466,7 +772,7 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 
 		uint32_t tsval, tsecr;
 		const boolean_t ts_valid =
-		    mac_sw_lro_extract_tcp_ts(tcp, &meoi, &tsval, &tsecr);
+		    mac_sw_lro_extract_tcp_ts(tcp, meoi, &tsval, &tsecr);
 
 		/*
 		 * At this point, we have a TCP segment which may or may not be
@@ -492,12 +798,46 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		 * the current bounds, so append it to the current state.
 		 */
 
+		/* !!! REMEMBER THAT MEOI POINTS TO INNER !!! */
 		mac_lro_state_t *matched = NULL;
 		for (uint_t i = 0; i < lrocnt; i++) {
 			mac_lro_state_t *l = &lrop[i];
 
 			if ((l->mls_flags & MLF_VALID) == 0) {
 				continue;
+			}
+
+			/*
+			 * RPZ TODO Instead of having all these different
+			 * probes below, which requires extra assembly for
+			 * setting up arguments for each one, just use one
+			 * probe with a reason string/enum.
+			 */
+			if (((l->mls_flags & MLF_GENEVE) != 0) &&
+			    outer.meoi_tuntype != METT_GENEVE) {
+				DTRACE_PROBE2(mac__lro__mismatch__encap,
+				    mblk_t *, mp, mac_lro_state_t *, l);
+				continue;
+			}
+
+			if (is_encap) {
+				if (!IN6_ARE_ADDR_EQUAL(&encap_ip6->ip6_src,
+				    &l->mls_encap_src) ||
+				    !IN6_ARE_ADDR_EQUAL(&encap_ip6->ip6_dst,
+				    &l->mls_encap_dst)) {
+					DTRACE_PROBE2(
+					    mac__lro__mismatch__encap_addr,
+					    mblk_t *, mp, mac_lro_state_t *, l);
+					continue;
+				}
+
+				if (encap_udp->uha_src_port != l->mls_encap_lport ||
+				    encap_udp->uha_dst_port != l->mls_encap_fport) {
+					DTRACE_PROBE2(
+						mac__lro__mismatch__encap__port,
+						mblk_t *, mp, mac_lro_state_t *, l);
+					continue;
+				}
 			}
 
 			if (((l->mls_flags & MLF_IPV4) != 0) != is_ipv4) {
@@ -530,8 +870,28 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 			const boolean_t ent_ts_valid =
 			    (l->mls_flags & MLF_TS_VALID) != 0;
 
+			/*
+			 * RPZ TODO: The data_len check must be diffrent
+			 * for IPv4 vs IPv6, as the former considers the
+			 * header as part of the length, and the later
+			 * does not.
+			 *
+			 * For encap we have to consider outer IPv6
+			 * length, which includes
+			 *
+			 *  - outer UDP
+			 *  - outer Geneve
+			 *  - inner L2
+			 *  - inner L3
+			 *  - inner L4
+			 *  - data_len (combined payload)
+			 */
 			if (force_commit ||
-			    data_len > IP_MAXPACKET - l->mls_len ||
+			    /*
+			     * RPZ TODO Wel'll want to write a test that
+			     * excercises data_len == l->mls_remain.
+			     */
+			    data_len > l->mls_remain ||
 			    seq != l->mls_exp_seq ||
 			    ts_valid != ent_ts_valid ||
 			    (ts_valid && l->mls_tsval > tsval) ||
@@ -546,16 +906,40 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 				 * but for the time being, we'll just append
 				 * this directly.
 				 */
+
+				/*
+				 * RPZ Yes, we really should be starting a
+				 * new sequence here to maximize batching/perf.
+				 *
+				 * RPZ TODO 04/22 I think this is the
+				 * cause of my out-of-order packets in the
+				 * guest, where we hit the LRO size limit,
+				 * but then the next packet/mblk (the
+				 * current one) is sent as-is instead of
+				 * being combined because we are jumping
+				 * to `skip` which immeidately adds the
+				 * current mblk as a next pointer. The
+				 * problem is that skip is overloaded
+				 * here, it's main use is to skip
+				 * attempting to perform LRO on a given
+				 * mblk (because it's unsuitable for
+				 * whatever reason), but in this case we
+				 * should be starting a new LRO packet.
+				 */
 				mac_lro_commit(l, &head, &tail);
 				goto skip;
 			}
 
+			/* RPZ TODO NEXT Need to track updates to encap
+			 * IPv6 len, encap UDP len */
 			DTRACE_PROBE4(mac__lro__append, mblk_t *, mp,
 			    mac_lro_state_t *, l, tcpha_t *, tcp,
 			    uint_t, data_len);
 			l->mls_tcp_ack = tcp->tha_ack;
 			l->mls_tcp_window = tcp->tha_win;
-			l->mls_len += data_len;
+			l->mls_remain -= data_len;
+			/* l->mls_encap_ip6len += data_len; */
+			/* l->mls_encap_udplen += data_len; */
 			l->mls_count++;
 			l->mls_exp_seq += data_len;
 			if (ts_valid) {
@@ -567,8 +951,13 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 			/*
 			 * XXX Consider something with a b_cont as not being fit
 			 * for inclusion rather than this
+			 *
+			 * RPZ Had to update this to skip the encap
+			 * headers as well, otherwse the resulting mblk is
+			 * much too large and its size doesn't match up
+			 * with the IP header length.
 			 */
-			mp->b_rptr += hdr_len;
+			mp->b_rptr += encap_hdrs_len + hdr_len;
 			if (MBLKL(mp) == 0) {
 				mblk_t *tmp = mp;
 				mp = tmp->b_cont;
@@ -582,6 +971,9 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 			(*cntp)--;
 			ASSERT3S(*cntp, >=, 1);
 			/*
+			 * RPZ I believe I fixed this so that sizep is
+			 * always set.
+			 *
 			 * sizep may be zero if we're not under bandwidth
 			 * control
 			 */
@@ -602,16 +994,59 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		} else {
 			mac_lro_state_t *l;
 
-			DTRACE_PROBE1(mac__lro__miss, mblk_t *, mp);
 			l = mac_lro_find_free_slot(lrop, lrocnt);
 			if (l == NULL) {
-				mac_lro_slot_misses++;
+				DTRACE_PROBE1(mac__lro__full, mblk_t *, mp);
+				/* RPZ TODO This should be a per SRS/LRO
+				 * state kstat */
+				mac_lro_full++;
 				goto skip;
 			}
 
 			l->mls_flags = MLF_VALID |
 			    (is_ipv4 ? MLF_IPV4 : 0) |
 			    (ts_valid ? MLF_TS_VALID : 0);
+
+			l->mls_remain = IP_MAXPACKET;
+
+			if (outer.meoi_tuntype == METT_GENEVE) {
+				l->mls_flags |= MLF_GENEVE;
+				l->mls_encap_src = encap_ip6->ip6_src;
+				l->mls_encap_dst = encap_ip6->ip6_dst;
+				l->mls_encap_lport = encap_udp->uha_src_port;
+				l->mls_encap_fport = encap_udp->uha_dst_port;
+
+				VERIFY3U(encap_data_len, >, 0);
+				l->mls_remain -= encap_data_len;
+				l->mls_remain -= inner.meoi_l2hlen +
+				    inner.meoi_l3hlen + inner.meoi_l4hlen +
+				    data_len;
+
+				l->mls_outer_l4hlen = outer.meoi_l4hlen;
+				l->mls_outer_tunhlen = outer.meoi_tunhlen;
+				l->mls_inner_l2hlen = meoi->meoi_l2hlen;
+				l->mls_inner_l3hlen = meoi->meoi_l3hlen;
+			} else {
+				/*
+				 * IPv4 counts its header as part of the
+				 * IP length; IPv6 does not.
+				 */
+				if (is_ipv4) {
+					l->mls_remain -= inner.meoi_l3hlen;
+				}
+
+				l->mls_remain -= inner.meoi_l4hlen + data_len;
+				l->mls_outer_l4hlen = 0;
+				l->mls_outer_tunhlen = 0;
+				l->mls_inner_l2hlen = meoi->meoi_l2hlen;
+				l->mls_inner_l3hlen = meoi->meoi_l3hlen;
+			}
+
+			l->mls_ip_offset = ip_offset;
+
+			l->mls_encap_ip6 = encap_ip6;
+			l->mls_encap_udp = encap_udp;
+
 			mac_lro_append_bcont(mp, &l->mls_head, &l->mls_tail);
 			l->mls_tcp = tcp;
 
@@ -627,7 +1062,7 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 			l->mls_lport = tcp->tha_lport;
 			l->mls_fport = tcp->tha_fport;
 
-			l->mls_len = hdr_len + data_len;
+			/* l->mls_len = encap_data_len + ip_len + data_len; */
 			l->mls_count = 1;
 			l->mls_exp_seq = ntohl(tcp->tha_seq) + data_len;
 			l->mls_tcp_ack = tcp->tha_ack;

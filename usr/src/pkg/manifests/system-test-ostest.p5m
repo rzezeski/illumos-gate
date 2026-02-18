@@ -208,6 +208,7 @@ file path=opt/os-tests/tests/mac/data/ipv6_tcp_lso_out.snoop mode=0444
 file path=opt/os-tests/tests/mac/data/ipv6_udp.snoop mode=0444
 file path=opt/os-tests/tests/mac/mac_cksum mode=0555
 file path=opt/os-tests/tests/mac/mac_ktest mode=0555
+file path=opt/os-tests/tests/mac/mac_lro mode=0555
 file path=opt/os-tests/tests/mac/mac_lso mode=0555
 file path=opt/os-tests/tests/mac/mac_parsing mode=0555
 dir  path=opt/os-tests/tests/minttl

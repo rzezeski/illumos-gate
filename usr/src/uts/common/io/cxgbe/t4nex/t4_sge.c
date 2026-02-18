@@ -981,6 +981,10 @@ t4_process_rx_iq(t4_sge_iq_t *rx_iq, uint_t desc_budget,
 				rxq->stats.rxpkts++;
 				rxq->stats.rxbytes += pkt_len;
 				totals.sit_rx_bytes += pkt_len;
+				/* RPZ NEXT Need to dtrace the CPL, see
+				 * values for csum_calc and err_vec */
+				DTRACE_PROBE3(rpz__cpl, struct cpl_rx_pkt *,
+				    cpl, uint16_t, err_vec, mblk_t *, mp);
 
 				*mp_tail = mp;
 				mp_tail = &mp->b_next;

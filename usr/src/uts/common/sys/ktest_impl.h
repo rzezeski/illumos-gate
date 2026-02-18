@@ -62,6 +62,13 @@ typedef struct ktest_ctx {
 	ktest_result_t		*ktc_res;
 	uchar_t			*ktc_input;
 	uint64_t		ktc_input_len;
+	/*
+	 * Pointer to the kernel-side output buffer, which is copied out
+	 * to the user supplied buffer in the ktest_result_t.
+	 */
+	uint8_t			*ktc_output;
+	uint64_t		ktc_output_len;
+	size_t			ktc_output_used;
 } ktest_ctx_t;
 
 #endif	/* _KERNEL */

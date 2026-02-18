@@ -882,6 +882,29 @@ ktest_result_pass(ktest_ctx_hdl_t *hdl, int line)
 	(void) ktest_set_result(hdl, KTEST_RESULT_PASS, line);
 }
 
+void ktest_get_outbuf(ktest_ctx_hdl_t *hdl, uint8_t **buf, size_t *len)
+{
+	ktest_ctx_t *ctx = (ktest_ctx_t *)hdl;
+	*buf = ctx->ktc_output;
+	*len = ctx->ktc_output_len;
+}
+
+void ktest_set_outused(ktest_ctx_hdl_t *hdl, size_t used)
+{
+	ktest_ctx_t *ctx = (ktest_ctx_t *)hdl;
+	ctx->ktc_output_used = used;
+}
+
+/* RPZ should this be size_t len? It will ripple to other areas of
+ * code. */
+/* void */
+/* ktest_result_output(ktest_ctx_hdl_t *hdl, uint8_t *data, uint64_t len) */
+/* { */
+/* 	ktest_ctx_t *ctx = (ktest_ctx_t *)hdl; */
+/* 	ctx->ktc_output  = data; */
+/* 	ctx->ktc_output_len = len; */
+/* } */
+
 /*
  * Clear the prepend message, undoing any message set by ktest_msg_prepend().
  *
@@ -1073,18 +1096,16 @@ out:
 }
 
 static void
-ktest_run_test(const ktest_test_t *kt, uchar_t *input, uint64_t input_len,
-    ktest_result_t *res)
+ktest_run_test(ktest_ctx_t *ctx, const ktest_test_t *kt, uchar_t *input,
+    uint64_t input_len, ktest_result_t *res)
 {
-	ktest_ctx_t ctx;
-
-	bzero(&ctx, sizeof (ctx));
+	/* bzero(&ctx, sizeof (ctx)); */
 	res->kr_type = KTEST_RESULT_NONE;
-	ctx.ktc_test = kt;
-	ctx.ktc_res = res;
-	ctx.ktc_input = input;
-	ctx.ktc_input_len = input_len;
-	kt->kt_fn((ktest_ctx_hdl_t *)&ctx);
+	ctx->ktc_test = kt;
+	ctx->ktc_res = res;
+	ctx->ktc_input = input;
+	ctx->ktc_input_len = input_len;
+	kt->kt_fn((ktest_ctx_hdl_t *)ctx);
 }
 
 static int
@@ -1236,12 +1257,43 @@ ktest_ioctl_run_test(intptr_t arg, int mode)
 		goto done;
 	}
 
-	ktest_run_test(kt, input_bytes, kro.kro_input_len, &kro.kro_result);
+	ktest_ctx_t ctx;
+	bzero(&ctx, sizeof (ctx));
+
+	ctx.ktc_output = kmem_zalloc(kro.kro_result.kr_output_len, KM_SLEEP);
+	ctx.ktc_output_len = kro.kro_result.kr_output_len;
+
+	ktest_run_test(&ctx, kt, input_bytes, kro.kro_input_len,
+	    &kro.kro_result);
 
 done:
 	mutex_exit(&ktest_lock);
 	kmem_free(input_bytes, kro.kro_input_len);
 
+	if (ctx.ktc_output_len > 0) {
+		kro.kro_flags |= KRO_OUTPUT;
+
+		VERIFY3U(ctx.ktc_output_used, <=, kro.kro_result.kr_output_len);
+		kro.kro_result.kr_output_used = ctx.ktc_output_used;
+
+		/* if (ctx.ktc_output_len > kro.kro_result.kr_output_len) { */
+		/* 	kro.kro_result.kr_output_len = ctx.ktc_output_len; */
+		/* 	ret = ENOBUFS; */
+		/* 	goto copy_kro; */
+		/* } */
+
+		ret = ddi_copyout(ctx.ktc_output, kro.kro_result.kr_output,
+		    kro.kro_result.kr_output_used, mode);
+
+		if (ret != 0) {
+			ret = EFAULT;
+			goto copy_kro;
+		}
+
+		kmem_free(ctx.ktc_output, ctx.ktc_output_len);
+	}
+
+copy_kro:
 	if (ret == 0 &&
 	    ddi_copyout(&kro, (void *)arg, sizeof (kro), mode) != 0) {
 		ret = EFAULT;

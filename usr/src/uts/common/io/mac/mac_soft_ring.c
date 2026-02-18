@@ -279,7 +279,7 @@ mac_soft_ring_free(mac_soft_ring_t *softring)
 	    (S_RING_CONDEMNED | S_RING_CONDEMNED_DONE | S_RING_PROC)) ==
 	    (S_RING_CONDEMNED | S_RING_CONDEMNED_DONE));
 	mac_drop_chain(softring->s_ring_first, "softring free");
-	if (softring->s_ring_type & ST_RING_TCP) {
+	if (softring->s_ring_state & ST_RING_TCP) {
 		mac_lro_free(softring->s_lro, softring->s_lro_len);
 		softring->s_lro = NULL;
 		softring->s_lro_len = 0;

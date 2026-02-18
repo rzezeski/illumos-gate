@@ -10,7 +10,7 @@
 #
 
 #
-# Copyright 2025 Oxide Computer Company
+# Copyright 2026 Oxide Computer Company
 #
 
 include $(SRC)/Makefile.master.64
@@ -21,6 +21,7 @@ DATADIR = $(TESTDIR)/data
 
 PROGS = \
 	mac_cksum \
+	mac_lro \
 	mac_lso \
 	mac_parsing
 
@@ -71,6 +72,10 @@ clobber: clean
 	-$(RM) $(PROGS)
 
 clean:
+
+mac_lro: mac_lro.o $(COMMON_OBJS)
+	$(LINK.c) $^ -o $@ $(LDLIBS)
+	$(POST_PROCESS)
 
 mac_lso: mac_lso.o $(COMMON_OBJS)
 	$(LINK.c) $^ -o $@ $(LDLIBS)

@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
+#include <strings.h>
 #include <dirent.h>
 #include <atomic.h>
 #include <sys/ktest.h>
@@ -314,15 +315,18 @@ ktest_list_free(ktest_list_iter_t *iter)
 bool
 ktest_run(ktest_hdl_t *hdl, const ktest_run_req_t *req, ktest_run_result_t *res)
 {
-	ktest_run_op_t kro = {
-		.kro_input_bytes = req->krq_input,
-		.kro_input_len = req->krq_input_len,
-	};
+	ktest_run_op_t kro;
+
+	bzero(&kro, sizeof (kro));
+	kro.kro_input_bytes = req->krq_input;
+	kro.kro_input_len = req->krq_input_len,
 
 	(void) strncpy(kro.kro_module, req->krq_module,
 	    sizeof (kro.kro_module));
 	(void) strncpy(kro.kro_suite, req->krq_suite, sizeof (kro.kro_suite));
 	(void) strncpy(kro.kro_test, req->krq_test, sizeof (kro.kro_test));
+	kro.kro_result.kr_output = req->krq_output;
+	kro.kro_result.kr_output_len = req->krq_output_len;
 
 	if (ioctl(hdl->kt_fd, KTEST_IOCTL_RUN_TEST, &kro) == -1) {
 		return (false);
@@ -336,6 +340,8 @@ ktest_run(ktest_hdl_t *hdl, const ktest_run_req_t *req, ktest_run_result_t *res)
 	    strnlen(kres->kr_msg_prepend, sizeof (kres->kr_msg_prepend)) +
 	    strnlen(kres->kr_msg, sizeof (kres->kr_msg));
 
+	res->krr_output_used = kres->kr_output_used;
+
 	if (msg_len != 0) {
 		if (asprintf(&res->krr_msg, "%s%s", kres->kr_msg_prepend,
 		    kres->kr_msg) == -1) {
@@ -344,6 +350,11 @@ ktest_run(ktest_hdl_t *hdl, const ktest_run_req_t *req, ktest_run_result_t *res)
 	} else {
 		res->krr_msg = NULL;
 	}
+
+
+	/* if ((kro.kro_flags & KRO_OUTPUT) != 0) { */
+	/* 	res->krr_output_len = kro.kro_output_len; */
+	/* } */
 
 	return (true);
 }

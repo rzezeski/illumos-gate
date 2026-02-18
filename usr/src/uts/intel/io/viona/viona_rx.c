@@ -440,11 +440,76 @@ viona_recv_merged(viona_vring_t *ring, const mblk_t *mp, size_t msz,
 
 	/* Add chksum bits, if needed */
 	if ((features & VIRTIO_NET_F_GUEST_CSUM) != 0) {
-		uint32_t cksum_flags;
-		mac_hcksum_get((mblk_t *)mp, NULL, NULL, NULL, NULL,
-		    &cksum_flags);
-		if ((cksum_flags & HCK_FULLCKSUM_OK) != 0) {
-			hdr->vrh_flags |= VIRTIO_NET_HDR_F_DATA_VALID;
+		/* RPZ TODO We will want TSO6 support and probably GSO_UDP */
+
+		/*
+		 * RPZ TODO We don't set HW_LSO on receive (I guess,
+		 * unless this came over mac-loopback where the mac
+		 * clients are on a mac that has LSO feature
+		 * advertised.
+		 *
+		 * RPZ This logic might need to be moved somewhere
+		 * else based on Kyle's change in
+		 * 227349345306fb206b7f303ce76099e288136097
+		 */
+		if (((features & VIRTIO_NET_F_GUEST_TSO4) != 0) &&
+		    ((DB_CKSUMFLAGS(mp) & (HW_LSO|MBLK_SW_LRO)) != 0)) {
+			/*
+			 * RPZ This is now set above after Kyle's
+			 * change in
+			 * 227349345306fb206b7f303ce76099e288136097
+			 */
+			/* hdr->vrh_gso_type |= VIRTIO_NET_HDR_GSO_TCPV4; */
+
+			/*
+			 * This flag, and its requisite data, are
+			 * required when doing GSO.
+			 */
+			hdr->vrh_flags |= VIRTIO_NET_HDR_F_NEEDS_CSUM;
+
+			/* hdr->vrh_gso_size = DB_LSOMSS(mp); */
+
+			/* RPZ TODO I'm hard-coding this for now because I
+			 * really don't know how I'm supposed to know the
+			 * MSS in this context? I feel like opte would
+			 * have to insert it based on its TCP state table.
+			 * But for now I know that both guests are using a
+			 * 1500 MTU link.
+			 *
+			 * Or maybe it's just good enough to have LRO set
+			 * it to the size of the packet data?
+			 *
+			 * This is now set above after Kyle's change
+			 * in 227349345306fb206b7f303ce76099e288136097
+			 */
+			/* hdr->vrh_gso_size = 1460; */
+			/* hdr->vrh_gso_size = DB_LSOMSS(mp); */
+
+			/* RPZ The meoi might need to be recalculated if
+			 * it's still seeing the caches values from Rx SRS
+			 * processing. */
+			mac_ether_offload_info_t meoi;
+			mac_ether_offload_info(mp, &meoi, NULL);
+
+			hdr->vrh_csum_start = meoi.meoi_l2hlen +
+			    meoi.meoi_l3hlen;
+			hdr->vrh_csum_offset = 16;
+
+			/* RPZ TODO I think we also need to set `hdr_len`? */
+			hdr->vrh_hdr_len = meoi.meoi_l2hlen +
+			    meoi.meoi_l3hlen + meoi.meoi_l4hlen;
+
+			DTRACE_PROBE3(rpz__viona__rx__meoi, mblk_t *, mp,
+			    mac_ether_offload_info_t *, &meoi,
+			    struct virtio_net_mrgrxhdr *, hdr);
+
+		} else {
+			uint32_t cksum_flags;
+			mac_hcksum_get((mblk_t *)mp, NULL, NULL, NULL, NULL,
+			    &cksum_flags);
+			if ((cksum_flags & HCK_FULLCKSUM_OK) != 0) {
+				hdr->vrh_flags |= VIRTIO_NET_HDR_F_DATA_VALID;
+			}
 		}
 	}
 
@@ -541,11 +606,17 @@ viona_rx_common(viona_vring_t *ring, mblk_t *mp, boolean_t is_loopback)
 		 * coalesced packets on that protocol.
 		 */
 		uint8_t gro_type = VIRTIO_NET_HDR_GSO_NONE;
-		if ((DB_CKSUMFLAGS(mp) & HW_LSO) != 0) {
+		/* RPZ Make sure to include LRO mblks */
+		if ((DB_CKSUMFLAGS(mp) & (MBLK_SW_LRO|HW_LSO)) != 0) {
 			mac_ether_offload_info_t meoi;
 			mac_ether_offload_info(mp, &meoi, NULL);
 			const mac_ether_offload_flags_t needed =
 			    MEOI_L2INFO_SET | MEOI_L3INFO_SET | MEOI_L4INFO_SET;
+
+			/* RPZ TODO I think the LRO impl should
+			 * probably set this based on the max segment
+			 * size it sees? */
+			DB_LSOMSS(mp) = 1460;
 
 			/*
 			 * Any large send/receive offloads require a valid MSS
