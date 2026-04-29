@@ -484,7 +484,7 @@ mac_sw_lro_is_suitable(const mblk_t *mp, const uint8_t offset,
 			return (MLS_TCP_OPTS);
 		} else if (meoi->meoi_l4hlen == tcp_ts_len) {
 			/*
-			 * RPZ Need to add offset to make sure we are
+			 * RPZ DONE Added 'offset' to make sure we are
 			 * accessing inner header.
 			 */
 			const uint32_t *tsp = (const uint32_t *)(mp->b_rptr +
@@ -630,6 +630,8 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		return;
 	}
 
+	/* RPZ Overly defensive programming, make these asserts
+	 * instead. */
 	if (lrop == NULL || lrocnt == 0) {
 		return;
 	}
@@ -800,8 +802,9 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 
 		/* !!! REMEMBER THAT MEOI POINTS TO INNER !!! */
 		mac_lro_state_t *matched = NULL;
+		mac_lro_state_t *l = NULL;
 		for (uint_t i = 0; i < lrocnt; i++) {
-			mac_lro_state_t *l = &lrop[i];
+			l = &lrop[i];
 
 			if ((l->mls_flags & MLF_VALID) == 0) {
 				continue;
@@ -885,6 +888,13 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 			 *  - inner L3
 			 *  - inner L4
 			 *  - data_len (combined payload)
+			 *
+			 * RPZ TODO For Geneve encap we have to verify
+			 * that the options are the same, otherwise we
+			 * need to commit the current LRO and start a new
+			 * one. This could drag down perf given that I
+			 * believe we are sending an MSS option in every
+			 * Geneve header?
 			 */
 			if (force_commit ||
 			    /*
@@ -927,7 +937,28 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 				 * should be starting a new LRO packet.
 				 */
 				mac_lro_commit(l, &head, &tail);
-				goto skip;
+
+				if (force_commit) {
+					/*
+					 * The current packet has a
+					 * matching LRO segment, but it is
+					 * not eligible for merging.
+					 * Commit the current LRO segment,
+					 * followed by this packet.
+					 */
+					goto skip;
+				} else {
+					/*
+					 * The current packet has a
+					 * matching LRO segment and is
+					 * eligible for merging, but not
+					 * as part of the current segment.
+					 * Commit the current segment and
+					 * initialize a new one starting
+					 * with this packet.
+					 */
+					goto reset;
+				}
 			}
 
 			/* RPZ TODO NEXT Need to track updates to encap
@@ -951,6 +982,13 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 			/*
 			 * XXX Consider something with a b_cont as not being fit
 			 * for inclusion rather than this
+			 *
+			 * RPZ Part of me agrees with this XXX. If we are
+			 * doing LRO at the NIC SRS, then the headers and
+			 * initial data should be in the first mblk.
+			 * However, that's only because I don't think we
+			 * make use of header splitting in any of our
+			 * drivers.
 			 *
 			 * RPZ Had to update this to skip the encap
 			 * headers as well, otherwse the resulting mblk is
@@ -992,8 +1030,6 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 			mp = next;
 			continue;
 		} else {
-			mac_lro_state_t *l;
-
 			l = mac_lro_find_free_slot(lrop, lrocnt);
 			if (l == NULL) {
 				DTRACE_PROBE1(mac__lro__full, mblk_t *, mp);
@@ -1002,6 +1038,7 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 				mac_lro_full++;
 				goto skip;
 			}
+reset:
 
 			l->mls_flags = MLF_VALID |
 			    (is_ipv4 ? MLF_IPV4 : 0) |
