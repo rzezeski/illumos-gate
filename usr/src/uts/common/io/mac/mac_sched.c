@@ -1192,6 +1192,12 @@ mac_tx_mode_t mac_tx_mode_list[] = {
  */
 boolean_t mac_latency_optimize = B_TRUE;
 
+/* RPZ Set this to non-zero to get SRS LRO. */
+int rpz_srs_lro = 0;
+
+/* RPZ Set this to disable mac siphon completely. */
+int rpz_no_siphon = 0;
+
 /*
  * Checks the bandwidth limit governing `srs`, and refreshes its
  * bandwidth allocation if possible. This allows more packets to either enter
@@ -2606,9 +2612,6 @@ check_again:
 		ASSERT((mac_srs->srs_state & SRS_POLL_THR_OWNER) ==
 		    SRS_POLL_THR_OWNER);
 
-		/* RPZ TODO need to add sw lro code here, doesn't matter
-		 * for testing opte in isolation as mac siphon prevents
-		 * enter polling mode */
 		mp = tail = head;
 		count = 0;
 		sz = 0;
@@ -2617,6 +2620,22 @@ check_again:
 			sz += msgdsize(mp);
 			mp = mp->b_next;
 			count++;
+		}
+
+		if (rpz_srs_lro > 0 && count > 1) {
+			int altcnt = count;
+			size_t altsz = sz;
+
+			mutex_enter(&mac_srs->srs_lro_lock);
+			mac_sw_lro(mac_srs->srs_lro, mac_srs->srs_lro_len,
+			    &head, &tail, &altcnt, &altsz);
+			mutex_exit(&mac_srs->srs_lro_lock);
+			count = altcnt;
+			sz = altsz;
+
+			/* RPZ convert these to ASSERTS */
+			VERIFY3S(count, >, 0);
+			VERIFY3U(sz, >, 0);
 		}
 
 		if (head != NULL) {
@@ -2639,7 +2658,7 @@ check_again:
 			else
 				srs_rx->sr_stat.mrs_chaincntover50++;
 
-			if (smcip != NULL) {
+			if (!rpz_no_siphon && smcip != NULL) {
 				mac_impl_t *smip = smcip->mci_mip;
 				const boolean_t callbacks =
 				    smip->mi_promisc_list != NULL ||
@@ -3591,9 +3610,6 @@ mac_rx_srs_subflow_process(void *arg, mac_resource_handle_t srs,
 	}
 }
 
-/* RPZ Set this to non-zero to get SRS LRO. */
-int rpz_srs_lro = 0;
-
 /*
  * MAC SRS receive side routine. If the data is coming from the
  * network (i.e. from a NIC) then this is called in interrupt context.
@@ -3615,9 +3631,6 @@ mac_rx_srs_process(void *arg, mac_resource_handle_t srs, mblk_t *mp_chain,
 	mac_bw_ctl_t		*mac_bw = mac_srs->srs_bw;
 	mac_srs_rx_t		*srs_rx = &mac_srs->srs_rx;
 	mac_client_impl_t	*mcip = mac_srs->srs_mcip;
-	int altcnt = 0;
-	size_t altsz = 0;
-	/* RPZ TODO I need to do this in srs poll as well. */
 
 	mp = tail = mp_chain;
 	while (mp != NULL) {
@@ -3692,8 +3705,8 @@ mac_rx_srs_process(void *arg, mac_resource_handle_t srs, mblk_t *mp_chain,
 	VERIFY3U(sz, >, 0);
 
 	if (rpz_srs_lro > 0 && count > 1) {
-		altcnt = count;
-		altsz = sz;
+		int altcnt = count;
+		size_t altsz = sz;
 		mutex_enter(&mac_srs->srs_lro_lock);
 		mac_sw_lro(mac_srs->srs_lro, mac_srs->srs_lro_len, &mp_chain,
 		    &tail, &altcnt, &altsz);
@@ -3704,7 +3717,7 @@ mac_rx_srs_process(void *arg, mac_resource_handle_t srs, mblk_t *mp_chain,
 		VERIFY3U(sz, >, 0);
 	}
 
-	if (mcip != NULL && mcip->mci_siphon != NULL) {
+	if (!rpz_no_siphon && mcip != NULL && mcip->mci_siphon != NULL) {
 		/* RPZ I added this just in case it matters for the
 		 * mci_siphon, as it would have been NULL before I added
 		 * the LRO call. */

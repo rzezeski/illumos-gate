@@ -41,6 +41,7 @@ typedef enum mac_lro_flags {
 	MLF_IPV4	= 1 << 1,
 	MLF_TS_VALID	= 1 << 2,
 	MLF_GENEVE	= 1 << 3,
+	/* RPZ TODO This flag is not currently used */
 	MLF_L2_INCLUDED	= 1 << 4,
 } mac_lro_flags_t;
 
@@ -195,25 +196,36 @@ mac_lro_commit(mac_lro_state_t *lro, mblk_t **headp, mblk_t **tailp)
 
 	/* RPZ Make sure mls_remain did not underflow */
 	VERIFY3U(lro->mls_remain, <, IP_MAXPACKET);
+
+	/*
+	 * For both the encap and non-ecap case, len represents the
+	 * IPv4 "Total Length" or the IPv6 "Payload Length". However,
+	 * for encap it contains the encap header's value. Therefore,
+	 * in order to determine the new inner header values,
+	 * subtraction of the outer headers must be done.
+	 */
 	uint16_t len = IP_MAXPACKET - lro->mls_remain;
 
-	/* RPZ TODO NEXT Need to check for MLF_GENEVE and update headers
-	 * accordingly */
+	/*
+	 * Update the encap header lengths and then adjust 'len' for
+	 * the inner IP header length.
+	 */
 	if ((lro->mls_flags & MLF_GENEVE) != 0) {
 		/*
-		 * IPv6 payload len does not include the IPv6 header
-		 * length; and UDP length does include the UDP header
+		 * IPv6 payload len DOES NOT include the IPv6 header
+		 * length; but UDP length DOES include the UDP header
 		 * length.
 		 */
 		lro->mls_encap_ip6->ip6_plen = htons(len);
 		lro->mls_encap_udp->uha_length = htons(len);
 
-		/* Now that the outer len is set, subtract headers to get
-		 * inner IP len. */
-		len -= lro->mls_outer_l4hlen + lro->mls_outer_tunhlen;
+		/*
+		 * Now that the outer header length values are set,
+		 * subtract headers to get inner IP length.
+		 */
+		len -= lro->mls_outer_l4hlen + lro->mls_outer_tunhlen +
+		    lro->mls_inner_l2hlen + lro->mls_inner_l3hlen;
 	}
-
-	len -= lro->mls_inner_l2hlen;
 
 	/*
 	 * We've joined multiple segments. This means that we need to update the
@@ -253,17 +265,12 @@ mac_lro_commit(mac_lro_state_t *lro, mblk_t **headp, mblk_t **tailp)
 		ip->ipha_hdr_checksum = (uint16_t)ipsum;
 		ip->ipha_length = htons(len);
 
-		/*
-		 * At this point len contains the L4 (TCP) header length +
-		 * payload.
-		 */
-		len -= lro->mls_inner_l3hlen;
-
 		uint32_t pcsum = 0;
 		pcsum += (ip->ipha_src >> 16) + (ip->ipha_src & 0xFFFF);
 		pcsum += (ip->ipha_dst >> 16) + (ip->ipha_dst & 0xFFFF);
 		pcsum += htons(IPPROTO_TCP);
-		pcsum += htons(len);
+		/* The pseudo-header checksum uses the transport length. */
+		pcsum += htons(len - lro->mls_inner_l3hlen);
 
 		while (pcsum >> 16) {
 			pcsum = (pcsum & 0xFFFF) + (pcsum >> 16);
@@ -273,9 +280,8 @@ mac_lro_commit(mac_lro_state_t *lro, mblk_t **headp, mblk_t **tailp)
 	} else {
 		ip6_t *ip = (ip6_t *)(lro->mls_head->b_rptr +
 		    lro->mls_ip_offset);
-		/* IPv6 does not include the header in the length. */
-		ip->ip6_plen = htons(len - lro->mls_inner_l3hlen);
 
+		ip->ip6_plen = htons(len);
 		/* RPZ TODO need to calculate pcsum for IPv6. */
 		tcp->tha_sum = 0;
 	}
@@ -293,8 +299,9 @@ mac_lro_commit(mac_lro_state_t *lro, mblk_t **headp, mblk_t **tailp)
 done:
 	DTRACE_PROBE3(mac__lro__commit, mblk_t *, lro->mls_head,
 	    mac_lro_state_t *, lro, tcpha_t *, tcp);
+	/* RPZ TODO Do no access flags directly like this, need provider API. */
+	lro->mls_head->b_datap->db_struioun.cksum.flags |= MBLK_SW_LRO;
 	mac_lro_append_bnext(lro->mls_head, headp, tailp);
-	(*headp)->b_datap->db_struioun.cksum.flags |= MBLK_SW_LRO;
 	ASSERT3P(*tailp, ==, lro->mls_head);
 	ASSERT3P(lro->mls_tail->b_cont, ==, NULL);
 	ASSERT3P(lro->mls_tail->b_next, ==, NULL);
@@ -442,6 +449,13 @@ mac_sw_lro_is_suitable(const mblk_t *mp, const uint8_t offset,
 	}
 
 	/* First mblk does not contain all headers */
+	/*
+	 * RPZ BUG This is a theoretical problem: realisticaly nothing
+	 * should deliver mblks to us with headers split across mblks.
+	 * However, if it were to happen, this could cause us to send
+	 * up a TCP segment out-of-order if it belongs to a flow that
+	 * currently has LRO state associated with it.
+	 */
 	const uint_t hdr_size =
 	    (meoi->meoi_l2hlen + meoi->meoi_l3hlen + meoi->meoi_l4hlen);
 	if (MBLKL(mp) < hdr_size) {
@@ -449,6 +463,10 @@ mac_sw_lro_is_suitable(const mblk_t *mp, const uint8_t offset,
 	}
 
 	/* IPv4 must not carry options, and must contain a valid L3 cksum */
+	/*
+	 * RPZ BUG This could also be a problem: this might belong to
+	 * a TCP flow with an existing LRO state (though very unlikely).
+	 */
 	if (meoi->meoi_l3proto == ETHERTYPE_IP) {
 		if (meoi->meoi_l3hlen != IP_SIMPLE_HDR_LENGTH) {
 			return (MLS_IPV4_OPTS);
@@ -471,10 +489,21 @@ mac_sw_lro_is_suitable(const mblk_t *mp, const uint8_t offset,
 	 * encap? */
 
 	/* The L4 cksum must be valid */
+	/*
+	 * RPZ BUG What if this packet is for a TCP flow with existing
+	 * LRO state? Is that a scenario that can happen?
+	 */
 	if ((hck_flags & HCK_FULLCKSUM_OK) == 0) {
 		return (MLS_L4_CKSUM);
 	}
 
+	/*
+	 * RPZ BUG It is DEFINITELY a bug to reject TCP packets right
+	 * here as this packet could belong to a flow with existing
+	 * LRO state, we need to delay this check until after we find
+	 * the existing flow so that it can be flushed and we can
+	 * maintain proper ordering of packets.
+	 */
 	if (meoi->meoi_l4proto == IPPROTO_TCP) {
 		/* The only TCP option permitted for now is timestamp */
 		const uint_t tcp_ts_len =
@@ -645,7 +674,10 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		mblk_t *next = mp->b_next;
 		mp->b_next = NULL;
 
-		/* Gather header info from packet */
+		/*
+		 * Gather header info from packet. For the case of
+		 * non-ecap, only the 'outer' is filled out.
+		 */
 		mac_ether_offload_info_t *meoi = NULL;
 		mac_ether_offload_info_t outer = { 0 };
 		mac_ether_offload_info_t inner = { 0 };
@@ -675,7 +707,8 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		boolean_t is_encap = B_FALSE;
 
 		if (meoi->meoi_tuntype != METT_NONE) {
-			/* RPZ Currently only support Geneve */
+			/* RPZ Currently only support Geneve. Remove
+			 * this VERIFY after done with dev. */
 			VERIFY3U(meoi->meoi_tuntype, ==, METT_GENEVE);
 
 			mac_lro_suitable_t s = mac_sw_lro_encap_is_suitable(mp,
@@ -712,6 +745,11 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		}
 
 		/*
+		 * At this point, if encap is on the scene, then meoi
+		 * = inner. Otherwise, meoi = outer.
+		 */
+
+		/*
 		 * RPZ ALERT after this point need to remember to add
 		 * encap_hdr_len to b_rptr for any reference into the
 		 * data, of course I'm assuming all headers are in the
@@ -743,12 +781,10 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		tcpha_t *tcp = (tcpha_t *)(mp->b_rptr + encap_hdrs_len +
 		    meoi->meoi_l2hlen + meoi->meoi_l3hlen);
 
-		const uint_t hdr_len =
-		    meoi->meoi_l2hlen + meoi->meoi_l3hlen + meoi->meoi_l4hlen;
 		/*
 		 * RPZ previously we were counting all headers against the
-		 * IP_MAXPACKET/data_len calc, but we can exclude the l2
-		 * len when not in encap
+		 * IP_MAXPACKET/data_len calc, but we can exclude the L2
+		 * len when not in encap as well as the L3 len when IPv6.
 		 *
 		 *   hdr_len: Length of inner L2 + L3 + L4 headers.
 		 *
@@ -759,8 +795,11 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		 *   Remember, we are adding payload bytes to
 		 *   statically-sized L2/L3/L4 headers.
 		 */
+		const uint_t hdr_len =
+		    meoi->meoi_l2hlen + meoi->meoi_l3hlen + meoi->meoi_l4hlen;
 		const uint_t ip_len = meoi->meoi_l3hlen + meoi->meoi_l4hlen;
 		const uint_t data_len = meoi->meoi_len - hdr_len;
+		/* RPZ NOTE ip_offset is for the inner IP */
 		const uint8_t ip_offset = encap_hdrs_len + meoi->meoi_l2hlen;
 
 		boolean_t force_commit = B_FALSE;
@@ -769,6 +808,50 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		    tcp->tha_urp != 0)) {
 			force_commit = B_TRUE;
 		} else if (data_len == 0) {
+			/*
+			 * RPZ TODO Can we check data_len earlier?
+			 * This applies to pure-ACK packets and we
+			 * should minimize the amount of work we do
+			 * for them.
+			 *
+			 * Part of the solution here might be to have
+			 * a minimum frame length to even be
+			 * considered for LRO, and that would be
+			 * checked as early as possible.
+			 */
+
+			/*
+			 * RPZ TODO We have a few places where we skip
+			 * BEFORE checking to see if this mblk matches
+			 * an existing LRO flow: that seems like it
+			 * could lead to out-of-rder delivery. I guess
+			 * it is fine as long as a key property is
+			 * held: it must be a packet for which we
+			 * would not be able to determine an LRO hash.
+			 * E.g. right now that would entail any
+			 * non-TCP flows.
+			 *
+			 * I think this is a problem for some
+			 * scenarios. E.g., the is-suitable check can
+			 * fail for a TCP packet for which we have a
+			 * current flow for, say because it has some
+			 * options we don't support. In that case we
+			 * need to make sure to commit the current LRO
+			 * state for that flow before skipping the
+			 * packet.
+			 *
+			 * I think the only safe way to do this is by
+			 * only allowing one LRO flow at a time, the
+			 * moment we see a packet for a different flow
+			 * or that is not suitable for LRO we commit
+			 * the current flow. The issue with this
+			 * implementation is that if the various
+			 * flows's packets are interleaved well, then
+			 * we don't get any benefit, and maybe end up
+			 * doing more work for no reason. I need to
+			 * ask chatgpt about how linux GRO handles
+			 * this.
+			 */
 			goto skip;
 		}
 
@@ -1054,6 +1137,18 @@ reset:
 				l->mls_encap_fport = encap_udp->uha_dst_port;
 
 				VERIFY3U(encap_data_len, >, 0);
+				/*
+				 * RPZ Use mls_remain to determine
+				 * `len` in commit. The len value
+				 * represents the value of the encap
+				 * IP header length value. Subtracting
+				 * from mls_remain is the same as
+				 * adding to length. In this case, the
+				 * IPv6 payload length should include
+				 * the "encap data" (UDP length +
+				 * tunnel header len), inner header
+				 * lengths, and payload
+				 */
 				l->mls_remain -= encap_data_len;
 				l->mls_remain -= inner.meoi_l2hlen +
 				    inner.meoi_l3hlen + inner.meoi_l4hlen +
@@ -1064,15 +1159,18 @@ reset:
 				l->mls_inner_l2hlen = meoi->meoi_l2hlen;
 				l->mls_inner_l3hlen = meoi->meoi_l3hlen;
 			} else {
+				/* VERIFY3U(inner.meoi_flags, ==, 0); */
+				/* VERIFY3U(encap_data_len, ==, 0); */
+
 				/*
 				 * IPv4 counts its header as part of the
 				 * IP length; IPv6 does not.
 				 */
 				if (is_ipv4) {
-					l->mls_remain -= inner.meoi_l3hlen;
+					l->mls_remain -= meoi->meoi_l3hlen;
 				}
 
-				l->mls_remain -= inner.meoi_l4hlen + data_len;
+				l->mls_remain -= meoi->meoi_l4hlen + data_len;
 				l->mls_outer_l4hlen = 0;
 				l->mls_outer_tunhlen = 0;
 				l->mls_inner_l2hlen = meoi->meoi_l2hlen;
@@ -1080,10 +1178,12 @@ reset:
 			}
 
 			l->mls_ip_offset = ip_offset;
-
+			/*
+			 * RPZ TODO These encap pointers should be in
+			 * the GENEVE if block above.
+			 */
 			l->mls_encap_ip6 = encap_ip6;
 			l->mls_encap_udp = encap_udp;
-
 			mac_lro_append_bcont(mp, &l->mls_head, &l->mls_tail);
 			l->mls_tcp = tcp;
 
