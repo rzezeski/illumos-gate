@@ -1604,7 +1604,7 @@ sof_rcv_flowctrl(sof_handle_t handle, boolean_t enable)
 	mutex_enter(&so->so_lock);
 	if (enable) {
 		inst->sofi_flags |= SOFIF_RCV_FLOWCTRL;
-		so->so_flowctrld = B_TRUE;
+		so_rcv_flowctrl_set(so);
 		so->so_state |= SS_FIL_RCV_FLOWCTRL;
 		mutex_exit(&so->so_lock);
 	} else {

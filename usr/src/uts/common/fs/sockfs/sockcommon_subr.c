@@ -615,6 +615,22 @@ so_process_new_message(struct sonode *so, mblk_t *mp_head, mblk_t *mp_last_head)
 	}
 }
 
+inline void
+so_rcv_flowctrl_set(struct sonode *so)
+{
+	DTRACE_PROBE2(so__recv__flowctrl, struct sonode *, so, boolean_t,
+	    B_TRUE);
+	so->so_flowctrld = B_TRUE;
+}
+
+inline void
+so_rcv_flowctrl_clr(struct sonode *so)
+{
+	DTRACE_PROBE2(so__recv__flowctrl, struct sonode *, so, boolean_t,
+	    B_FALSE);
+	so->so_flowctrld = B_FALSE;
+}
+
 /*
  * Check flow control on a given sonode.  Must have so_lock held, and
  * this function will release the hold.  Return true if flow control
@@ -627,7 +643,7 @@ so_check_flow_control(struct sonode *so)
 
 	if (so->so_flowctrld && (so->so_rcv_queued < so->so_rcvlowat &&
 	    !(so->so_state & SS_FIL_RCV_FLOWCTRL))) {
-		so->so_flowctrld = B_FALSE;
+		so_rcv_flowctrl_clr(so);
 		mutex_exit(&so->so_lock);
 		/*
 		 * Open up flow control. SCTP does not have any downcalls, and

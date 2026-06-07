@@ -1366,7 +1366,7 @@ so_queue_msg_impl(struct sonode *so, mblk_t *mp,
 
 	space_left = so->so_rcvbuf - so->so_rcv_queued;
 	if (space_left <= 0) {
-		so->so_flowctrld = B_TRUE;
+		so_rcv_flowctrl_set(so);
 		*errorp = ENOSPC;
 		space_left = -1;
 	}

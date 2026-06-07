@@ -168,6 +168,9 @@ extern vnode_t *so_get_vnode(sock_upper_handle_t);
 
 /* Common misc. functions */
 
+extern void	so_rcv_flowctrl_set(struct sonode *so);
+extern void	so_rcv_flowctrl_clr(struct sonode *so);
+
 	/* accept queue */
 extern int	so_acceptq_enqueue(struct sonode *, struct sonode *);
 extern int	so_acceptq_enqueue_locked(struct sonode *, struct sonode *);
