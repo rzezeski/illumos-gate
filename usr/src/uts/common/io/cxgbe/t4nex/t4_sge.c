@@ -749,6 +749,8 @@ struct sge_iq_totals {
 	uint_t sit_rx_bytes;
 };
 
+uint_t rpz_rx_intr_budget = 128;
+
 /*
  * Process entries on an event Ingress Queue. This type of queue receives
  * firmware events, Tx EGR messages, and Rx forwarded interrupts only. It is
@@ -759,7 +761,7 @@ t4_process_event_iq(t4_sge_iq_t *event_iq)
 {
 	int rc = TIR_SUCCESS;
 	struct adapter *sc = event_iq->tsi_adapter;
-
+	/* RPZ Note that we are still using 1/8th for the event queues. */
 	const uint_t desc_limit = event_iq->tsi_qsize / 8;
 	struct sge_iq_totals totals = { 0 };
 	uint_t cidx_incr = 0;
@@ -849,7 +851,7 @@ t4_process_event_iq(t4_sge_iq_t *event_iq)
 	 */
 	t4_sge_iq_t *rx_iq = NULL;
 	while ((rx_iq = list_remove_head(&iql_fwd)) != NULL) {
-		(void) t4_process_rx_iq(rx_iq, rx_iq->tsi_qsize / 8, NULL);
+		(void) t4_process_rx_iq(rx_iq, rpz_rx_intr_budget, NULL);
 	}
 
 	/*
