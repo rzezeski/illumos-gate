@@ -2618,11 +2618,6 @@ check_again:
 			count++;
 		}
 
-		mutex_enter(lock);
-
-		ASSERT((mac_srs->srs_state & SRS_POLL_THR_OWNER) ==
-		    SRS_POLL_THR_OWNER);
-
 		if (rpz_srs_lro > 0 && count > 1) {
 			int altcnt = count;
 			size_t altsz = sz;
@@ -2638,6 +2633,11 @@ check_again:
 			VERIFY3S(count, >, 0);
 			VERIFY3U(sz, >, 0);
 		}
+
+		mutex_enter(lock);
+
+		ASSERT((mac_srs->srs_state & SRS_POLL_THR_OWNER) ==
+		    SRS_POLL_THR_OWNER);
 
 		if (head != NULL) {
 			tail->b_next = NULL;
