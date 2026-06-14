@@ -2607,10 +2607,6 @@ check_again:
 		/* Poll the underlying Hardware */
 		mutex_exit(lock);
 		head = MAC_HWRING_POLL(mac_srs->srs_ring, (int)bytes_to_pickup);
-		mutex_enter(lock);
-
-		ASSERT((mac_srs->srs_state & SRS_POLL_THR_OWNER) ==
-		    SRS_POLL_THR_OWNER);
 
 		mp = tail = head;
 		count = 0;
@@ -2621,6 +2617,11 @@ check_again:
 			mp = mp->b_next;
 			count++;
 		}
+
+		mutex_enter(lock);
+
+		ASSERT((mac_srs->srs_state & SRS_POLL_THR_OWNER) ==
+		    SRS_POLL_THR_OWNER);
 
 		if (rpz_srs_lro > 0 && count > 1) {
 			int altcnt = count;
