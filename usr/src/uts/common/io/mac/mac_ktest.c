@@ -795,32 +795,32 @@ mac_sw_lro_test(ktest_ctx_hdl_t *ctx)
 
 	mblk_t *mp = head;
 	while (mp != NULL) {
-		mac_ether_offload_info_t outer = {0};
-		mac_ether_offload_info_t inner = {0};
+		/* mac_ether_offload_info_t outer = {0}; */
+		/* mac_ether_offload_info_t inner = {0}; */
 
-		mac_ether_offload_info(head, &outer, NULL);
+		/* mac_ether_offload_info(head, &outer, NULL); */
 
-		if ((outer.meoi_flags & MEOI_L3INFO_SET) != 0 &&
-		    outer.meoi_l4proto == IPPROTO_UDP) {
-			/* RPZ TODO assuming aligned and that udp header
-			 * is in first mblk */
-			udpha_t *udp = (udpha_t*)(mp->b_rptr +
-			    outer.meoi_l2hlen + outer.meoi_l3hlen);
-			if (ntohs(udp->uha_dst_port) == 6081) {
-				/* RPZ SEe mac_sched.c for why I'm doing
-				 * all this. */
-				outer.meoi_tuntype = METT_GENEVE;
-				mp->b_datap->db_pktinfo.t_tuntype = METT_GENEVE;
-				mac_ether_offload_info(mp, &outer, NULL);
-				mac_ether_set_pktinfo(mp, &outer, NULL);
-				mac_ether_offload_info(mp, &outer, &inner);
-				mac_ether_set_pktinfo(mp, &outer, &inner);
-			} else {
-				mac_ether_set_pktinfo(mp, &outer, NULL);
-			}
-		} else {
-			mac_ether_set_pktinfo(mp, &outer, NULL);
-		}
+		/* if ((outer.meoi_flags & MEOI_L3INFO_SET) != 0 && */
+		/*     outer.meoi_l4proto == IPPROTO_UDP) { */
+		/* 	/\* RPZ TODO assuming aligned and that udp header */
+		/* 	 * is in first mblk *\/ */
+		/* 	udpha_t *udp = (udpha_t*)(mp->b_rptr + */
+		/* 	    outer.meoi_l2hlen + outer.meoi_l3hlen); */
+		/* 	if (ntohs(udp->uha_dst_port) == 6081) { */
+		/* 		/\* RPZ SEe mac_sched.c for why I'm doing */
+		/* 		 * all this. *\/ */
+		/* 		outer.meoi_tuntype = METT_GENEVE; */
+		/* 		mp->b_datap->db_pktinfo.t_tuntype = METT_GENEVE; */
+		/* 		mac_ether_offload_info(mp, &outer, NULL); */
+		/* 		mac_ether_set_pktinfo(mp, &outer, NULL); */
+		/* 		mac_ether_offload_info(mp, &outer, &inner); */
+		/* 		mac_ether_set_pktinfo(mp, &outer, &inner); */
+		/* 	} else { */
+		/* 		mac_ether_set_pktinfo(mp, &outer, NULL); */
+		/* 	} */
+		/* } else { */
+		/* 	mac_ether_set_pktinfo(mp, &outer, NULL); */
+		/* } */
 
 		mp = mp->b_next;
 	}
@@ -831,7 +831,7 @@ mac_sw_lro_test(ktest_ctx_hdl_t *ctx)
 	mac_lro_state_t *lro = NULL;
 	uint_t lro_len = 0;
 	mac_lro_alloc(&lro, &lro_len);
-	mac_sw_lro(lro, lro_len, &head, &tail, &acnt, &alen);
+	mac_sw_lro(lro, lro_len, &head, &tail, &acnt, &alen, B_TRUE);
 
 	/* RPZ I'm letting ktest return ENOBUFS in this case. But perhaps
 	 * it should be failure here instead. */

@@ -2374,7 +2374,7 @@ mac_partial_offload_info(const mblk_t *mp, size_t off,
  * interpret any payload bytes which are part of the tunnel protocol for length
  * checking.
  */
-static void
+void
 mac_partial_tun_info(const mblk_t *mp, size_t off,
     mac_ether_offload_info_t *meoi)
 {

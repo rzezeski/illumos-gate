@@ -554,6 +554,119 @@ mac_sw_lro_extract_tcp_ts(const tcpha_t *tcpha,
 	return (B_TRUE);
 }
 
+
+static void
+mac_sw_lro_prep(mblk_t *mpchain, mac_ether_offload_info_t *outer,
+    mac_ether_offload_info_t *inner, boolean_t l2_included)
+{
+	mblk_t *mp = mpchain;
+
+	while (mp != NULL) {
+		if (l2_included) {
+			mac_ether_offload_info(mp, outer, NULL);
+		} else {
+			switch (IPH_HDR_VERSION(mp->b_rptr)) {
+			case IP_VERSION:
+				outer->meoi_l3proto = ETHERTYPE_IP;
+				outer->meoi_flags |= MEOI_L2INFO_SET;
+				break;
+			case IPV6_VERSION:
+				outer->meoi_l3proto = ETHERTYPE_IPV6;
+				outer->meoi_flags |= MEOI_L2INFO_SET;
+				break;
+			default:
+				break;
+			}
+
+			mac_partial_offload_info(mp, 0, outer);
+			/*
+			 * Set to zero since we are starting at IP
+			 * header and tunnel calculations rely on
+			 * meoi_l2hlen being valid.
+			 */
+			outer->meoi_l2hlen = 0;
+			/* RPZ TODO do I need to set meoi_len here? */
+		}
+
+		if ((outer->meoi_flags & MEOI_L3INFO_SET) != 0 &&
+		    outer->meoi_l4proto == IPPROTO_UDP) {
+			/* RPZ TODO assuming aligned and that udp header
+			 * is in first mblk */
+			udpha_t *udp = (udpha_t*)(mp->b_rptr +
+			    outer->meoi_l2hlen + outer->meoi_l3hlen);
+			if (ntohs(udp->uha_dst_port) == 6081) {
+				/*
+				 * RPZ TODO Faking this for now. I
+				 * believe we have to update opte
+				 * sender to fill in the IPv6/UDP
+				 * checksum so that the T6 won't mark
+				 * it with RX_ERROR_CSUM on
+				 * receive.
+				 */
+				mac_hcksum_set(mp, 0, 0, 0, 0xffff,
+				    HCK_FULLCKSUM_OK | HCK_FULLCKSUM |
+				    HCK_IPV4_HDRCKSUM_OK);
+
+				/* RPZ setting meoi_tuntype here is
+				 * useless because it is immediately
+				 * erased by the call to
+				 * mac_ether_offload_info(), which
+				 * always bzero's its arguments,
+				 * because the entire point is to fill
+				 * out the meoi. To also use meoi as
+				 * input you need to use the partial
+				 * variants. */
+				outer->meoi_tuntype = METT_GENEVE;
+				mac_partial_tun_info(mp, 0, outer);
+
+				/* RPZ TODO (3) The two modifications
+				 * below were not enough. I think there is
+				 * a bug here, but I don't want to track
+				 * it down right now. I think there is
+				 * some chicken/egg problem with
+				 * db_pktinfo.t_tuntype, we need to call
+				 * mac_partial_tun_info() +
+				 * mac_ether_set_pktinfo() to get it, but
+				 * we don't call mac_partial_tun_info()
+				 * unless db_pktinfo.t_tuntype is already
+				 * set. I may be holding this wrong. I
+				 * need to read the comments/code closely,
+				 * and maybe write a few test cases. */
+				/* mp->b_datap->db_pktinfo.t_tuntype = METT_GENEVE; */
+
+				/* RPZ TODO (2) Then I had to add this
+				 * call, because the tunnel info is not
+				 * set unless you call
+				 * mac_ether_offload_info() with
+				 * meoi_tuntype set. With this call we
+				 * will fall into mac_partial_tun_info()
+				 * which will set MEOI_TUNINFO_SET, which
+				 * will tell pack_tunpktinfo() to write
+				 * db_pktinfo.t_tunhlen/t_tuntype. */
+				/* mac_ether_offload_info(mp, outer, NULL); */
+
+				/* RPZ TODO (1) This api feels a bit
+				 * weird. I have to first set the outer
+				 * info so that mac_ether_offload_info()
+				 * will see the tunnel type in db_pktinfo.
+				 * And then set the packet info again
+				 * after the inner has been filled out */
+				mac_ether_set_pktinfo(mp, outer, NULL);
+				mac_ether_offload_info(mp, outer, inner);
+				mac_ether_set_pktinfo(mp, outer, inner);
+			}
+
+			/* RPZ TODO I think I need to call
+			 * mac_ether_set_pktinfo(mp, &outer, NULL) here
+			 * was well. */
+		} else {
+			mac_ether_set_pktinfo(mp, outer, NULL);
+		}
+
+		mp = mp->b_next;
+	}
+}
+
 /* static inline boolean_t */
 /* mac_lro_is_full(mac_lro_state_t *lrop, uint_t new_data_len) */
 /* { */
@@ -646,7 +759,7 @@ mac_sw_lro_extract_tcp_ts(const tcpha_t *tcpha,
  */
 void
 mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
-    mblk_t **tailp, int *cntp, size_t *sizep)
+    mblk_t **tailp, int *cntp, size_t *sizep, boolean_t l2_included)
 {
 	mblk_t *mp;
 	mblk_t *head = NULL, *tail = NULL;
@@ -669,6 +782,10 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		lrop[i].mls_flags = 0;
 	}
 
+	mac_ether_offload_info_t outer = { 0 };
+	mac_ether_offload_info_t inner = { 0 };
+	mac_sw_lro_prep(*mp_chain, &outer, &inner, l2_included);
+
 	mp = *mp_chain;
 	while (mp != NULL) {
 		mblk_t *next = mp->b_next;
@@ -679,8 +796,8 @@ mac_sw_lro(mac_lro_state_t *lrop, uint_t lrocnt, mblk_t **mp_chain,
 		 * non-ecap, only the 'outer' is filled out.
 		 */
 		mac_ether_offload_info_t *meoi = NULL;
-		mac_ether_offload_info_t outer = { 0 };
-		mac_ether_offload_info_t inner = { 0 };
+		/* mac_ether_offload_info_t outer = { 0 }; */
+		/* mac_ether_offload_info_t inner = { 0 }; */
 		uint32_t flags;
 
 		if (MBLKL(mp) == 0) {

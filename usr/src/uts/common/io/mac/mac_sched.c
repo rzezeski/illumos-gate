@@ -2624,7 +2624,7 @@ check_again:
 
 			mutex_enter(&mac_srs->srs_lro_lock);
 			mac_sw_lro(mac_srs->srs_lro, mac_srs->srs_lro_len,
-			    &head, &tail, &altcnt, &altsz);
+			    &head, &tail, &altcnt, &altsz, B_TRUE);
 			mutex_exit(&mac_srs->srs_lro_lock);
 			count = altcnt;
 			sz = altsz;
@@ -3082,6 +3082,8 @@ again:
 		mutex_enter(&mac_srs->srs_lock);
 	}
 
+	/* RPZ srs_first can never be non-NULL here because we set it
+	 * to NULL above, right? */
 	if (((mac_srs->srs_state & SRS_PAUSE) == 0) &&
 	    (mac_srs->srs_first != NULL)) {
 		/*
@@ -3635,66 +3637,66 @@ mac_rx_srs_process(void *arg, mac_resource_handle_t srs, mblk_t *mp_chain,
 
 	mp = tail = mp_chain;
 	while (mp != NULL) {
-		mac_ether_offload_info_t outer = {0};
-		mac_ether_offload_info_t inner = {0};
-		mac_ether_offload_info(mp, &outer, NULL);
-		if ((outer.meoi_flags & MEOI_L3INFO_SET) != 0 &&
-		    outer.meoi_l4proto == IPPROTO_UDP) {
-			/* RPZ TODO assuming aligned and that udp header
-			 * is in first mblk */
-			udpha_t *udp = (udpha_t*)(mp->b_rptr +
-			    outer.meoi_l2hlen + outer.meoi_l3hlen);
-			if (ntohs(udp->uha_dst_port) == 6081) {
-				/* RPZ TODO Faking this for now. I believe
-				 * we have to update opte to fill in the
-				 * IPv6/UDP checksum so that the T6 won't
-				 * mark it with RX_ERROR_CSUM on receive. */
-				mac_hcksum_set(mp, 0, 0, 0, 0xffff,
-				    HCK_FULLCKSUM_OK | HCK_FULLCKSUM |
-				    HCK_IPV4_HDRCKSUM_OK);
+		/* mac_ether_offload_info_t outer = {0}; */
+		/* mac_ether_offload_info_t inner = {0}; */
+		/* mac_ether_offload_info(mp, &outer, NULL); */
+		/* if ((outer.meoi_flags & MEOI_L3INFO_SET) != 0 && */
+		/*     outer.meoi_l4proto == IPPROTO_UDP) { */
+		/* 	/\* RPZ TODO assuming aligned and that udp header */
+		/* 	 * is in first mblk *\/ */
+		/* 	udpha_t *udp = (udpha_t*)(mp->b_rptr + */
+		/* 	    outer.meoi_l2hlen + outer.meoi_l3hlen); */
+		/* 	if (ntohs(udp->uha_dst_port) == 6081) { */
+		/* 		/\* RPZ TODO Faking this for now. I believe */
+		/* 		 * we have to update opte to fill in the */
+		/* 		 * IPv6/UDP checksum so that the T6 won't */
+		/* 		 * mark it with RX_ERROR_CSUM on receive. *\/ */
+		/* 		mac_hcksum_set(mp, 0, 0, 0, 0xffff, */
+		/* 		    HCK_FULLCKSUM_OK | HCK_FULLCKSUM | */
+		/* 		    HCK_IPV4_HDRCKSUM_OK); */
 
-				outer.meoi_tuntype = METT_GENEVE;
-				/* RPZ TODO (3) The two modifications
-				 * below were not enough. I think there is
-				 * a bug here, but I don't want to track
-				 * it down right now. I think there is
-				 * some chicken/egg problem with
-				 * db_pktinfo.t_tuntype, we need to call
-				 * mac_partial_tun_info() +
-				 * mac_ether_set_pktinfo() to get it, but
-				 * we don't call mac_partial_tun_info()
-				 * unless db_pktinfo.t_tuntype is already
-				 * set. I may be holding this wrong. I
-				 * need to read the comments/code closely,
-				 * and maybe write a few test cases. */
-				mp->b_datap->db_pktinfo.t_tuntype = METT_GENEVE;
-				/* RPZ TODO (2) Then I had to add this
-				 * call, because the tunnel info is not
-				 * set unless you call
-				 * mac_ether_offload_info() with
-				 * meoi_tuntype set. With this call we
-				 * will fall into mac_partial_tun_info()
-				 * which will set MEOI_TUNINFO_SET, which
-				 * will tell pack_tunpktinfo() to write
-				 * db_pktinfo.t_tunhlen/t_tuntype. */
-				mac_ether_offload_info(mp, &outer, NULL);
-				/* RPZ TODO (1) This api feels a bit
-				 * weird. I have to first set the outer
-				 * info so that mac_ether_offload_info()
-				 * will see the tunnel type in db_pktinfo.
-				 * And then set the packet info again
-				 * after the inner has been filled out */
-				mac_ether_set_pktinfo(mp, &outer, NULL);
-				mac_ether_offload_info(mp, &outer, &inner);
-				mac_ether_set_pktinfo(mp, &outer, &inner);
-			}
+		/* 		outer.meoi_tuntype = METT_GENEVE; */
+		/* 		/\* RPZ TODO (3) The two modifications */
+		/* 		 * below were not enough. I think there is */
+		/* 		 * a bug here, but I don't want to track */
+		/* 		 * it down right now. I think there is */
+		/* 		 * some chicken/egg problem with */
+		/* 		 * db_pktinfo.t_tuntype, we need to call */
+		/* 		 * mac_partial_tun_info() + */
+		/* 		 * mac_ether_set_pktinfo() to get it, but */
+		/* 		 * we don't call mac_partial_tun_info() */
+		/* 		 * unless db_pktinfo.t_tuntype is already */
+		/* 		 * set. I may be holding this wrong. I */
+		/* 		 * need to read the comments/code closely, */
+		/* 		 * and maybe write a few test cases. *\/ */
+		/* 		mp->b_datap->db_pktinfo.t_tuntype = METT_GENEVE; */
+		/* 		/\* RPZ TODO (2) Then I had to add this */
+		/* 		 * call, because the tunnel info is not */
+		/* 		 * set unless you call */
+		/* 		 * mac_ether_offload_info() with */
+		/* 		 * meoi_tuntype set. With this call we */
+		/* 		 * will fall into mac_partial_tun_info() */
+		/* 		 * which will set MEOI_TUNINFO_SET, which */
+		/* 		 * will tell pack_tunpktinfo() to write */
+		/* 		 * db_pktinfo.t_tunhlen/t_tuntype. *\/ */
+		/* 		mac_ether_offload_info(mp, &outer, NULL); */
+		/* 		/\* RPZ TODO (1) This api feels a bit */
+		/* 		 * weird. I have to first set the outer */
+		/* 		 * info so that mac_ether_offload_info() */
+		/* 		 * will see the tunnel type in db_pktinfo. */
+		/* 		 * And then set the packet info again */
+		/* 		 * after the inner has been filled out *\/ */
+		/* 		mac_ether_set_pktinfo(mp, &outer, NULL); */
+		/* 		mac_ether_offload_info(mp, &outer, &inner); */
+		/* 		mac_ether_set_pktinfo(mp, &outer, &inner); */
+		/* 	} */
 
-			/* RPZ TODO I think I need to call
-			 * mac_ether_set_pktinfo(mp, &outer, NULL) here
-			 * was well. */
-		} else {
-			mac_ether_set_pktinfo(mp, &outer, NULL);
-		}
+		/* 	/\* RPZ TODO I think I need to call */
+		/* 	 * mac_ether_set_pktinfo(mp, &outer, NULL) here */
+		/* 	 * was well. *\/ */
+		/* } else { */
+		/* 	mac_ether_set_pktinfo(mp, &outer, NULL); */
+		/* } */
 
 		tail = mp;
 		count++;
@@ -3710,7 +3712,7 @@ mac_rx_srs_process(void *arg, mac_resource_handle_t srs, mblk_t *mp_chain,
 		size_t altsz = sz;
 		mutex_enter(&mac_srs->srs_lro_lock);
 		mac_sw_lro(mac_srs->srs_lro, mac_srs->srs_lro_len, &mp_chain,
-		    &tail, &altcnt, &altsz);
+		    &tail, &altcnt, &altsz, B_TRUE);
 		mutex_exit(&mac_srs->srs_lro_lock);
 		count = altcnt;
 		sz = altsz;
@@ -5216,7 +5218,7 @@ mac_rx_soft_ring_process(mac_client_impl_t *mcip, mac_soft_ring_t *ringp,
 		 * mode.
 		 */
 		mac_sw_lro(ringp->s_lro, ringp->s_lro_len, &mp_chain,
-		    &tail, &altcnt, &sz);
+		    &tail, &altcnt, &altsz, B_FALSE);
 		if (altcnt != cnt || altsz != sz) {
 			mac_srs_rx_t *srs_rx = &mac_srs->srs_rx;
 			/*

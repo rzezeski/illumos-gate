@@ -928,6 +928,8 @@ typedef struct mac_direct_rxs_s {
  */
 extern void mac_partial_offload_info(const mblk_t *, size_t,
     mac_ether_offload_info_t *);
+extern void mac_partial_tun_info(const mblk_t *, size_t,
+    mac_ether_offload_info_t *);
 
 /*
  * Struct definitions for mac_bcast.c
@@ -962,7 +964,7 @@ typedef struct mac_lro_state_s mac_lro_state_t;
 extern void mac_lro_alloc(mac_lro_state_t **, uint_t *);
 extern void mac_lro_free(mac_lro_state_t *, uint_t);
 extern void mac_sw_lro(mac_lro_state_t *, uint_t, mblk_t **, mblk_t **, int *,
-    size_t *);
+    size_t *, boolean_t);
 
 #ifdef	__cplusplus
 }
