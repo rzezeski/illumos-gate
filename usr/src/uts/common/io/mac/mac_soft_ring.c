@@ -231,6 +231,10 @@ mac_soft_ring_create_rx(int id, clock_t wait, const mac_soft_ring_state_t type,
 
 	mac_soft_ring_stat_create(ringp);
 
+	if (type & ST_RING_TCP) {
+		mac_lro_alloc(&ringp->s_lro, &ringp->s_lro_len);
+	}
+
 	return (ringp);
 }
 
@@ -259,10 +263,6 @@ mac_soft_ring_create_tx(int id, clock_t wait, const mac_soft_ring_state_t type,
 	}
 
 	mac_soft_ring_stat_create(ringp);
-
-	if (type & ST_RING_TCP) {
-		mac_lro_alloc(&ringp->s_lro, &ringp->s_lro_len);
-	}
 
 	return (ringp);
 }
