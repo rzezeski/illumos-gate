@@ -195,7 +195,7 @@ extern void	so_process_new_message(struct sonode *, mblk_t *, mblk_t *);
 extern boolean_t	so_check_flow_control(struct sonode *);
 
 extern mblk_t	*socopyinuio(uio_t *, ssize_t, size_t, ssize_t, size_t, int *);
-extern mblk_t	*socopyoutuio(mblk_t *, struct uio *, ssize_t, int *);
+extern mblk_t	*socopyoutuio(mblk_t *, struct uio *, ssize_t, int *, int);
 
 extern boolean_t somsghasdata(mblk_t *);
 extern void	so_rcv_flush(struct sonode *);

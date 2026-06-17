@@ -864,7 +864,8 @@ recvit(int sock, struct nmsghdr *msg, struct uio *uiop, int flags,
 	controllen = msg->msg_controllen;
 
 	msg->msg_flags = flags & (MSG_OOB | MSG_PEEK | MSG_WAITALL |
-	    MSG_DONTWAIT | MSG_XPG4_2 | MSG_CMSG_CLOEXEC | MSG_CMSG_CLOFORK);
+	    MSG_DONTWAIT | MSG_DROP | MSG_XPG4_2 | MSG_CMSG_CLOEXEC |
+	    MSG_CMSG_CLOFORK);
 
 	error = socket_recvmsg(so, msg, uiop, CRED());
 	if (error) {

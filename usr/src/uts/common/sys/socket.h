@@ -428,6 +428,7 @@ struct msghdr32 {
 #define	MSG_DONTWAIT	0x80		/* Don't block for this recv */
 #define	MSG_NOTIFICATION 0x100		/* Notification, not data */
 #define	MSG_NOSIGNAL	0x200		/* Don't generate SIGPIPE */
+#define	MSG_DROP	0x400		/* Don't copy, drop the data */
 #define	MSG_DUPCTRL	0x800		/* Save control message for use with */
 					/* with left over data */
 #define	MSG_CMSG_CLOEXEC	0x1000	/* FD_CLOEXEC w/ SCM_RIGHTS */

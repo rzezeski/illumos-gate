@@ -498,7 +498,8 @@ done:
 }
 
 mblk_t *
-socopyoutuio(mblk_t *mp, struct uio *uiop, ssize_t max_read, int *errorp)
+socopyoutuio(mblk_t *mp, struct uio *uiop, ssize_t max_read, int *errorp,
+    int flags)
 {
 	int error;
 	ptrdiff_t n;
@@ -517,11 +518,16 @@ socopyoutuio(mblk_t *mp, struct uio *uiop, ssize_t max_read, int *errorp)
 		if ((n = MIN(max_read, MBLKL(mp))) != 0) {
 			ASSERT(n > 0);
 
-			error = uiomove(mp->b_rptr, n, UIO_READ, uiop);
-			if (error != 0) {
-				freemsg(mp);
-				*errorp = error;
-				return (NULL);
+			if (flags & MSG_DROP) {
+				uiop->uio_resid -= n;
+				uiop->uio_loffset += n;
+			} else {
+				error = uiomove(mp->b_rptr, n, UIO_READ, uiop);
+				if (error != 0) {
+					freemsg(mp);
+					*errorp = error;
+					return (NULL);
+				}
 			}
 		}
 
@@ -754,6 +760,7 @@ again1:
 			}
 			mp = nmp;
 		} else {
+			/* RPZ what is this doing? */
 			ASSERT(mp->b_prev != NULL);
 			last_tail = mp->b_prev;
 			mp->b_prev = NULL;
@@ -814,7 +821,7 @@ again1:
 				 * Can not read beyond the oobmark
 				 */
 				mp = socopyoutuio(mp, uiop,
-				    oobmark == 0 ? INFPSZ : oobmark, &error);
+				    oobmark == 0 ? INFPSZ : oobmark, &error, flags);
 				if (error != 0) {
 					freemsg(*mctlp);
 					*mctlp = NULL;
