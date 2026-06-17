@@ -201,6 +201,8 @@ viona_copy_mblk(const mblk_t *mp, size_t seek, caddr_t buf, size_t len,
 	return (copied);
 }
 
+int rpz_set_vrh_flags = -1;
+
 static int
 viona_recv_plain(viona_vring_t *ring, const mblk_t *mp, size_t msz,
     uint8_t gro_type)
@@ -510,6 +512,10 @@ viona_recv_merged(viona_vring_t *ring, const mblk_t *mp, size_t msz,
 			if ((cksum_flags & HCK_FULLCKSUM_OK) != 0) {
 				hdr->vrh_flags |= VIRTIO_NET_HDR_F_DATA_VALID;
 			}
+		}
+
+		if (rpz_set_vrh_flags != -1) {
+			hdr->vrh_flags = rpz_set_vrh_flags;
 		}
 	}
 
