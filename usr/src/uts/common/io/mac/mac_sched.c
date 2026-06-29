@@ -2234,7 +2234,7 @@ check_again:
 
 		/* Poll the underlying hardware */
 		mutex_exit(lock);
-		mblk_t *head = MAC_HWRING_POLL(mac_srs->srs_ring,
+		mblk_t *head = MAC_HWRING_POLL(srs_rx->sr_ring,
 		    (int)bytes_to_pickup);
 
 		mblk_t *tail = head;
@@ -5851,22 +5851,23 @@ mac_rx_soft_ring_process(mac_soft_ring_t *ringp, mblk_t *mp_chain, mblk_t *tail,
 		mac_sw_lro(ringp->s_lro, ringp->s_lro_len, &mp_chain,
 		    &tail, &altcnt, &altsz, B_FALSE);
 		if (altcnt != cnt || altsz != sz) {
-			mac_srs_rx_t *srs_rx = &mac_srs->srs_rx;
+			mac_srs_rx_t *srs_rx = &from_mac_srs->srs_rx;
 			/*
 			 * XXX Update the srs counts here without doing any
 			 * signaling logic. This is required to make sure that
 			 * we properly end up handling
 			 */
-			mutex_enter(&mac_srs->srs_lock);
-			srs_rx->sr_poll_pkt_cnt -= (cnt - altcnt);
-			if (mac_srs->srs_type & SRST_BW_CONTROL) {
-				/* XXX Used to be MAC_TX_UPDATE_BW_INFO */
-				mutex_enter(&mac_srs->srs_bw->mac_bw_lock);
-				mac_srs->srs_bw->mac_bw_sz -= (sz - altsz);
-				mac_srs->srs_bw->mac_bw_used += (sz - altsz);
-				mutex_exit(&mac_srs->srs_bw->mac_bw_lock);
-			}
-			mutex_exit(&mac_srs->srs_lock);
+			mutex_enter(&from_mac_srs->srs_lock);
+			from_mac_srs->srs_rx.sr_poll_pkt_cnt -= (cnt - altcnt);
+			/* RPZ TODO bandwidth control */
+			/* if (mac_srs->srs_type & SRST_BW_CONTROL) { */
+			/* 	/\* XXX Used to be MAC_TX_UPDATE_BW_INFO *\/ */
+			/* 	mutex_enter(&mac_srs->srs_bw->mac_bw_lock); */
+			/* 	mac_srs->srs_bw->mac_bw_sz -= (sz - altsz); */
+			/* 	mac_srs->srs_bw->mac_bw_used += (sz - altsz); */
+			/* 	mutex_exit(&mac_srs->srs_bw->mac_bw_lock); */
+			/* } */
+			mutex_exit(&from_mac_srs->srs_lock);
 			sz = altsz;
 			cnt = altcnt;
 		}

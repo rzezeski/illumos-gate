@@ -933,13 +933,7 @@ struct mac_soft_ring_set_s {
 	kcondvar_t	srs_async;	/* cv for worker thread */
 	kcondvar_t	srs_cv;		/* cv for poll thread */
 	timeout_id_t	srs_tid;	/* timeout id for pending timeout */
-	mac_lro_state_t	*srs_lro;
-	kmutex_t	srs_lro_lock; /* protect srs_lro */
-	/*
-	 * RPZ move this below srs_count to
-	 * avoid hole?
-	 */
-	uint_t		srs_lro_len;
+
 	/*
 	 * An atomic count of the number of threads processing
 	 * packets in this SRS. Used when `MRSLP_SHARED`.
@@ -1067,6 +1061,14 @@ struct mac_soft_ring_set_s {
 	 */
 	uint64_t	srs_match_pkts;
 	uint64_t	srs_match_bytes;
+
+	mac_lro_state_t	*srs_lro;
+	kmutex_t	srs_lro_lock; /* protect srs_lro */
+	/*
+	 * RPZ move this below srs_count to
+	 * avoid hole?
+	 */
+	uint_t		srs_lro_len;
 
 	/*
 	 * This struct is around 5kiB. We need to be smarter around

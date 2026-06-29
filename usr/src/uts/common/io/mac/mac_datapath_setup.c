@@ -2508,7 +2508,6 @@ mac_srs_create(mac_client_impl_t *mcip, flow_entry_t *flent,
  	mac_srs->srs_state = 0;
  	mac_srs->srs_type = (srs_type | SRST_NO_SOFT_RINGS);
  	mac_srs->srs_worker_cpuid = mac_srs->srs_worker_cpuid_save = -1;
- 	mac_srs->srs_poll_cpuid = mac_srs->srs_poll_cpuid_save = -1;
  	mac_srs->srs_mcip = mcip;
 	mac_lro_alloc(&mac_srs->srs_lro, &mac_srs->srs_lro_len);
 	mac_srs_fanout_list_alloc(mac_srs);

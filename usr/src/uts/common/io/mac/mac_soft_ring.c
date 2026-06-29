@@ -215,9 +215,15 @@ mac_soft_ring_create_rx(int id, clock_t wait, pri_t pri,
 
 	mac_soft_ring_stat_create(ringp);
 
-	if (type & ST_RING_TCP) {
-		mac_lro_alloc(&ringp->s_lro, &ringp->s_lro_len);
-	}
+	/*
+	 * RPZ TODO We no longer have protocol types per softring,
+	 * rather we have SRSes that match up with flow tree entries.
+	 * Perhaps the LRO state should have off the flow tree entry?
+	 * I'm not going to worry about it for the moment; for now
+	 * I'll just allocate LRO state for all softrings and then the
+	 * suitability check should filter out anything non-TCP.
+	 */
+	mac_lro_alloc(&ringp->s_lro, &ringp->s_lro_len);
 
 	return (ringp);
 }
@@ -263,11 +269,10 @@ mac_soft_ring_free(mac_soft_ring_t *softring)
 	    (S_RING_CONDEMNED | S_RING_CONDEMNED_DONE | S_RING_PROC)), ==,
 	    (S_RING_CONDEMNED | S_RING_CONDEMNED_DONE));
 	mac_drop_chain(softring->s_ring_first, "softring free");
-	if (softring->s_ring_state & ST_RING_TCP) {
-		mac_lro_free(softring->s_lro, softring->s_lro_len);
-		softring->s_lro = NULL;
-		softring->s_lro_len = 0;
-	}
+	/* RPZ TODO Move LRO state to flow entry or something. */
+	mac_lro_free(softring->s_lro, softring->s_lro_len);
+	softring->s_lro = NULL;
+	softring->s_lro_len = 0;
 	softring->s_ring_tx_arg2 = NULL;
 	mac_soft_ring_stat_delete(softring);
 	mac_callback_free(softring->s_ring_notify_cb_list);
@@ -409,7 +414,6 @@ mac_rx_soft_ring_drain(mac_soft_ring_t *ringp)
 
 	while ((ringp->s_ring_first != NULL) &&
 	    !(ringp->s_ring_state & S_RING_PAUSE)) {
-		mp = ringp->s_ring_first;
 		mblk_t *mp = ringp->s_ring_first;
 		const uint32_t cnt = ringp->s_ring_count;
 
