@@ -23,6 +23,7 @@
 # Use is subject to license terms.
 #
 # Copyright 2023 OmniOS Community Edition (OmniOSce) Association.
+# Copyright 2026 Oxide Computer Company
 #
 
 SUBDIRS = mdb_kb \
@@ -32,6 +33,7 @@ SUBDIRS = mdb_kb \
 	sata \
 	smbios \
 	vmm \
-	xhci
+	xhci \
+	cxgbe
 
 include ../../Makefile.subdirs

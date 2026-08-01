@@ -2335,6 +2335,12 @@ t4_fl_get_payload(struct sge_fl *fl, uint32_t len, bool newbuf)
 	const uint32_t roffset = fl->offset;
 	uint_t credits_avail = 0;
 
+	/*
+	 * RPZ This feels like a potential bug, if it's possible for
+	 * offset == 0 && newbuf == true. In that case we would not
+	 * enter the if block, and not advance the the cidx, even
+	 * though the entry clearly dictates that we should.
+	 */
 	if (fl->offset > 0 && newbuf) {
 		/*
 		 * The device has moved onto the next buffer. Reset our offset
@@ -2421,6 +2427,8 @@ restore:
  * We'll do immediate data tx for non-LSO, but only when not coalescing.  We're
  * willing to use upto 2 hardware descriptors which means a maximum of 96 bytes
  * of immediate data.
+ *
+ * RPZ: (2 * 64) - 16 - 16 = 96 bytes
  */
 #define	IMM_LEN ( \
 	2 * EQ_HC_SIZE \
@@ -2492,14 +2500,36 @@ start:
 		mac_hcksum_set(m, 0, 0, 0, 0, txinfo->flags);
 	}
 
+	/* RPZ Would a bunch of IMM_LEN packets explain what I see for
+	 * that txq where tse_avail is 7 but no dhdls are in use and
+	 * only ~1000 bytes of TXB are in use?
+	 *
+	 * RPZ BUG? The only place that writes ULP_TX_SC_IMM is
+	 * write_ulp_cpl_sgl(), and AFAICT that is only called when
+	 * sge_only/coalescing == true. What are we writing to the EQ
+	 * HC ring when we have an immediate data write (single
+	 * packet, no b_next, less than IMM_LEN/96 bytes)?
+	 *
+	 */
 	if (txinfo->len <= IMM_LEN && !sgl_only)
 		return (0);	/* nsegs = 0 tells caller to use imm. tx */
 
+	/* RPZ since we don't call add_mblk() here, does that mean all
+	 * copied packets DO NOT have their mblk stashed in tx_sdesc?
+	 * I'm wondering if the "weird" tx_sdesc entries I see (with
+	 * the weird mblk/packets) are cases where the packet data was
+	 * copied and the mp_head is data leftover from a previous tx? */
 	if (txinfo->len <= txq->copy_threshold &&
 	    copy_into_txb(txq, m, txinfo->len, txinfo) == 0) {
 		goto done;
 	}
 
+	/* RPZ So, if the entire length of the packet (regardless if
+	 * it is made up of multiple mblk segments via b_cont) is
+	 * greater than the copy_threshold, then we end up here. In
+	 * this case we visit each mblk segment of the packet in turn
+	 * and decide whether to copy it to the TXB or add it as a DMA
+	 * handle (add_mblk()). */
 	for (; m; m = m->b_cont) {
 
 		len = MBLKL(m);
@@ -2616,6 +2646,12 @@ copy_into_txb(struct sge_txq *txq, mblk_t *m, int len, struct txinfo *txinfo)
 	return (0);
 }
 
+/*
+ * RPZ This is always the function used to write the bytes for DSGL
+ * entries, it writes them to a buffer in txinfo (so always the DSGL
+ * entries for a single packet) which it then copies out to to the EQ
+ * ring when writing the WR.
+ */
 static inline void
 add_seg(struct txinfo *txinfo, uint64_t ba, uint32_t len)
 {
@@ -2681,6 +2717,7 @@ add_mblk(struct sge_txq *txq, struct txinfo *txinfo, mblk_t *m, int len)
 
 	add_seg(txinfo, cookie.dmac_laddress, cookie.dmac_size);
 	while (--ccount) {
+		/* RPZ TODO Stop using this old, unsafe API. */
 		ddi_dma_nextcookie(dhdl, &cookie);
 		add_seg(txinfo, cookie.dmac_laddress, cookie.dmac_size);
 	}
@@ -3026,6 +3063,18 @@ write_txpkt_wr(struct port_info *pi, struct sge_txq *txq, mblk_t *m,
 	if (txinfo->nsegs > 0)
 		nflits += txinfo->nflits;
 	else {
+		/* RPZ Pretty sure my "weird queue" is full of imm
+		 * wrties, I should write a walker to walk the host
+		 * credits so I can compare those structures to the
+		 * sdescs and see if the len written to the WR matches
+		 * that of the packet data.
+		 *
+		 * I also really need to update the code so that sdesc
+		 * values are more clear. We should add a type
+		 * (FREE/IMM/PKT/PKTS/etc) and make sure to clear
+		 * fields when free. We might also want to track the
+		 * sum of the length of the packets and number of
+		 * packets in the sdesc. */
 		nflits += howmany(txinfo->len, FLIT_NUM_BYTES);
 		ctrl += txinfo->len;
 	}
@@ -3205,6 +3254,7 @@ static inline void
 write_ulp_cpl_sgl(struct port_info *pi, struct sge_txq *txq,
     struct txpkts *txpkts, struct txinfo *txinfo)
 {
+	/* RPZ mc = master command, sc = sub command */
 	struct ulp_txpkt *ulpmc;
 	struct ulptx_idata *ulpsc;
 	struct cpl_tx_pkt_core *cpl;

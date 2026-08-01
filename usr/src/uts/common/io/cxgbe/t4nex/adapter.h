@@ -128,6 +128,29 @@ typedef struct t4_eq_host_credit {
 	uint64_t flit[8];
 } t4_eq_host_credit_t;
 
+/*
+ * RPZ Could we add a pointer/offset to the start of the host credit
+ * in the tse_ring? That way it's easy to map the sdesc to its
+ * corresponding WR. Well, the sw desc and hw "desc" always share the
+ * same index, so perhaps I don't actually need that?
+ *
+ * RPZ We should have a type field that has an enum value telling us
+ * if it's: free, flush, pkt, pkts, etc
+ *
+ * RPZ This should include the TXB VA offset when txb_used > 0. That
+ * way it's easy to inspect the associated TXB memory. Currently you
+ * have to print the WR and read the SGL values.
+ *
+ * RPZ We should either store a copy of the last consumed/reclaimed
+ * sdesc in the sge_txq or we should keep a structure that copies the
+ * important bits like the type (flush vs. pkt vs. pkts etc),
+ * txb_used, hdls_used, etc. This would help greatly in debugging
+ * because right now you can't assume that the previous entry
+ * (sdesc[cidx - 1]) is the one corresponding to the most recently
+ * reclaimed entry, because we index into the sdesc based on our
+ * tse_pidx, which is based on number of HCs used for a given WR
+ * (stored as 'credits_used' here).
+ */
 struct tx_sdesc {
 	mblk_t *mp_head;
 	mblk_t *mp_tail;
@@ -480,6 +503,8 @@ struct sge_txq_stats {
 	uint32_t pullup_late;	/* # of pullups while building frame's SGL */
 	uint32_t pullup_failed;	/* # of failed pullups */
 	uint32_t csum_failed;	/* # of csum reqs we failed to fulfill */
+	/* RPZ temporary hack to make mdb object work on helios */
+	uint64_t tunnel_lso_fail;
 };
 
 /* Ethernet packet transmission queue */

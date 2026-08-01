@@ -897,6 +897,9 @@ call_idcmd(mdb_idcmd_t *idcp, uintmax_t addr, uintmax_t count,
 	save_cp = mdb.m_frame->f_cp;
 	mdb.m_frame->f_cp = &cmd;
 
+	if (mdb_list_next(&mdb.m_frame->f_cmds) != NULL)
+		flags |= DCMD_PIPE_OUT;
+
 	ret = mdb_call_idcmd(cmd.c_dcmd, addr, count, flags,
 	    &cmd.c_argv, NULL, NULL);
 
